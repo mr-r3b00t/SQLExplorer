@@ -229,8 +229,11 @@ function Invoke-ParallelPortScan {
     foreach ($job in $jobs) {
         try {
             $output = $job.Pipe.EndInvoke($job.Result)
-            if ($output) {
-                [void]$results.Add($output)
+            # EndInvoke returns a PSDataCollection — iterate to extract the actual PSCustomObject(s)
+            foreach ($item in $output) {
+                if ($item) {
+                    [void]$results.Add($item)
+                }
             }
         }
         catch {
