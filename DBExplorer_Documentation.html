@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DBExplorer.ps1 - Technical Documentation</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #f0f2f5;
+        color: #333;
+        line-height: 1.6;
+    }
+    .page-header {
+        background: linear-gradient(135deg, #1a237e 0%, #283593 50%, #0d47a1 100%);
+        color: white;
+        padding: 50px 40px 40px;
+        text-align: center;
+    }
+    .page-header h1 { font-size: 36px; font-weight: 300; margin-bottom: 8px; }
+    .page-header .version { font-size: 14px; opacity: 0.7; letter-spacing: 2px; text-transform: uppercase; }
+    .page-header .tagline { font-size: 16px; opacity: 0.85; margin-top: 12px; max-width: 700px; margin-left: auto; margin-right: auto; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px 60px; }
+    .toc {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        padding: 30px 40px;
+        margin: -30px auto 30px;
+        position: relative;
+        max-width: 1200px;
+    }
+    .toc h2 { font-size: 18px; color: #1a237e; margin-bottom: 15px; }
+    .toc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 8px; }
+    .toc a {
+        color: #1a237e;
+        text-decoration: none;
+        font-size: 14px;
+        padding: 6px 12px;
+        border-radius: 4px;
+        display: block;
+        transition: background 0.15s;
+    }
+    .toc a:hover { background: #e8eaf6; }
+    .toc a .toc-num { color: #9e9e9e; margin-right: 6px; font-size: 12px; }
+
+    .card {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
+        overflow: hidden;
+    }
+    .card-header {
+        padding: 20px 30px;
+        border-bottom: 1px solid #e9ecef;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+    .card-header h2 { font-size: 20px; color: #1a237e; font-weight: 600; }
+    .card-header .badge {
+        font-size: 11px;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .badge-phase { background: #e8eaf6; color: #1a237e; }
+    .badge-func { background: #e3f2fd; color: #0d47a1; }
+    .badge-core { background: #fce4ec; color: #c62828; }
+    .badge-security { background: #fff3e0; color: #e65100; }
+    .badge-report { background: #e8f5e9; color: #2e7d32; }
+    .card-body { padding: 24px 30px; }
+    .card-body p { margin-bottom: 12px; font-size: 14px; }
+
+    .flow-diagram {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 0;
+        padding: 20px 0;
+    }
+    .flow-step {
+        background: white;
+        border: 2px solid #1a237e;
+        border-radius: 10px;
+        padding: 16px 20px;
+        min-width: 160px;
+        text-align: center;
+        position: relative;
+    }
+    .flow-step .step-num {
+        position: absolute;
+        top: -12px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1a237e;
+        color: white;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        font-size: 12px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .flow-step .step-title { font-weight: 600; font-size: 13px; color: #1a237e; margin-top: 4px; }
+    .flow-step .step-detail { font-size: 11px; color: #666; margin-top: 4px; }
+    .flow-arrow {
+        font-size: 24px;
+        color: #1a237e;
+        padding: 0 8px;
+        flex-shrink: 0;
+    }
+
+    .func-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .func-table th {
+        background: #343a40;
+        color: white;
+        padding: 10px 14px;
+        text-align: left;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .func-table td { padding: 10px 14px; border-bottom: 1px solid #e9ecef; vertical-align: top; }
+    .func-table tr:hover { background: #f8f9fa; }
+    .func-table code {
+        background: #e8eaf6;
+        color: #1a237e;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 12px;
+        font-family: 'Consolas', 'Courier New', monospace;
+    }
+    .func-table .lines { color: #9e9e9e; font-size: 11px; white-space: nowrap; }
+
+    .param-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+    .param-card {
+        border: 1px solid #e9ecef;
+        border-radius: 6px;
+        padding: 14px 18px;
+        background: #fafafa;
+    }
+    .param-card .pname { font-family: 'Consolas', monospace; font-weight: 700; color: #1a237e; font-size: 14px; }
+    .param-card .ptype { font-size: 11px; color: #666; margin-left: 8px; }
+    .param-card .pdefault { font-size: 12px; color: #4caf50; margin-top: 4px; }
+    .param-card .pdesc { font-size: 13px; margin-top: 6px; }
+
+    .sql-block {
+        background: #263238;
+        color: #eeffff;
+        border-radius: 6px;
+        padding: 16px 20px;
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 12px;
+        overflow-x: auto;
+        margin: 12px 0;
+        line-height: 1.5;
+    }
+    .sql-block .kw { color: #89ddff; }
+    .sql-block .fn { color: #82aaff; }
+    .sql-block .str { color: #c3e88d; }
+    .sql-block .comment { color: #546e7a; font-style: italic; }
+
+    .credential-flow {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin: 16px 0;
+    }
+    .cred-step {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+    }
+    .cred-step .cred-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 14px;
+        flex-shrink: 0;
+    }
+    .cred-try { background: #e3f2fd; }
+    .cred-try .cred-icon { background: #1565c0; color: white; }
+    .cred-fail { background: #fff3e0; }
+    .cred-fail .cred-icon { background: #e65100; color: white; }
+    .cred-prompt { background: #f3e5f5; }
+    .cred-prompt .cred-icon { background: #6a1b9a; color: white; }
+    .cred-ok { background: #e8f5e9; }
+    .cred-ok .cred-icon { background: #2e7d32; color: white; }
+    .cred-skip { background: #fce4ec; }
+    .cred-skip .cred-icon { background: #c62828; color: white; }
+
+    .error-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 0; font-size: 13px; }
+    .error-grid .eg-header { background: #343a40; color: white; padding: 8px 14px; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+    .error-grid .eg-scenario { padding: 10px 14px; border-bottom: 1px solid #e9ecef; background: #f8f9fa; font-weight: 500; }
+    .error-grid .eg-behavior { padding: 10px 14px; border-bottom: 1px solid #e9ecef; }
+
+    .report-section-demo {
+        border: 2px solid #e9ecef;
+        border-radius: 8px;
+        margin: 12px 0;
+        overflow: hidden;
+    }
+    .rsd-header {
+        background: #f8f9fa;
+        padding: 12px 18px;
+        font-weight: 600;
+        color: #1a237e;
+        border-left: 4px solid #1a237e;
+        font-size: 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .rsd-header .rsd-tag {
+        font-size: 10px;
+        background: #e8eaf6;
+        color: #1a237e;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+    .rsd-body { padding: 14px 18px; font-size: 13px; color: #555; }
+    .rsd-body ul { margin-left: 18px; margin-top: 6px; }
+    .rsd-body li { margin: 3px 0; }
+
+    .callout {
+        border-left: 4px solid;
+        padding: 14px 20px;
+        border-radius: 0 6px 6px 0;
+        margin: 16px 0;
+        font-size: 13px;
+    }
+    .callout-info { border-color: #1565c0; background: #e3f2fd; }
+    .callout-warn { border-color: #f9a825; background: #fffde7; }
+    .callout-tip { border-color: #2e7d32; background: #e8f5e9; }
+    .callout strong { display: block; margin-bottom: 4px; }
+
+    .port-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 12px 0; }
+    .port-table th { background: #37474f; color: white; padding: 8px 14px; text-align: left; }
+    .port-table td { padding: 8px 14px; border-bottom: 1px solid #e9ecef; }
+    .port-table tr:nth-child(even) { background: #fafafa; }
+    .port-table .port-num { font-family: monospace; font-weight: 700; color: #1a237e; }
+
+    .arch-layer {
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        gap: 0;
+        margin: 8px 0;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+    .arch-label {
+        padding: 14px 18px;
+        font-weight: 600;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        color: white;
+    }
+    .arch-content {
+        padding: 14px 18px;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .arch-chip {
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 4px 10px;
+        font-size: 12px;
+        font-family: monospace;
+    }
+    .layer-1 .arch-label { background: #1a237e; }
+    .layer-1 .arch-content { background: #e8eaf6; }
+    .layer-2 .arch-label { background: #283593; }
+    .layer-2 .arch-content { background: #c5cae9; }
+    .layer-3 .arch-label { background: #303f9f; }
+    .layer-3 .arch-content { background: #e8eaf6; }
+    .layer-4 .arch-label { background: #3949ab; }
+    .layer-4 .arch-content { background: #c5cae9; }
+    .layer-5 .arch-label { background: #3f51b5; }
+    .layer-5 .arch-content { background: #e8eaf6; }
+    .layer-6 .arch-label { background: #5c6bc0; }
+    .layer-6 .arch-content { background: #c5cae9; }
+
+    .footer-doc {
+        text-align: center;
+        padding: 30px 20px;
+        color: #9e9e9e;
+        font-size: 12px;
+    }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+    <div class="version">Technical Documentation</div>
+    <h1>DBExplorer.ps1</h1>
+    <div class="tagline">Active Directory MSSQL Discovery &amp; Inventory Tool &mdash; a single-file PowerShell script that discovers SQL Server instances across a domain, inventories their configuration, databases, and security model via WinRM, and produces self-contained HTML reports.</div>
+</div>
+
+<div class="toc">
+    <h2>Contents</h2>
+    <div class="toc-grid">
+        <a href="#overview"><span class="toc-num">1</span> Architecture Overview</a>
+        <a href="#parameters"><span class="toc-num">2</span> Script Parameters</a>
+        <a href="#execution-flow"><span class="toc-num">3</span> Execution Flow</a>
+        <a href="#phase1"><span class="toc-num">4</span> Phase 1: AD Discovery</a>
+        <a href="#phase2"><span class="toc-num">5</span> Phase 2: Port Scanning</a>
+        <a href="#phase3"><span class="toc-num">6</span> Phase 3: WinRM &amp; Credentials</a>
+        <a href="#phase4"><span class="toc-num">7</span> Phase 4: SQL Instance Detection</a>
+        <a href="#phase5"><span class="toc-num">8</span> Phase 5: SQL Inventory</a>
+        <a href="#sql-queries"><span class="toc-num">9</span> SQL Queries Reference</a>
+        <a href="#reports"><span class="toc-num">10</span> HTML Report Generation</a>
+        <a href="#error-handling"><span class="toc-num">11</span> Error Handling</a>
+        <a href="#function-ref"><span class="toc-num">12</span> Function Reference</a>
+    </div>
+</div>
+
+<div class="container">
+
+<!-- 1. Architecture Overview -->
+<div class="card" id="overview">
+    <div class="card-header">
+        <h2>1. Architecture Overview</h2>
+    </div>
+    <div class="card-body">
+        <p>DBExplorer is a <strong>single self-contained .ps1 file</strong> (~1,890 lines) designed to run from any domain-joined Windows PC. It has zero external dependencies beyond the built-in ActiveDirectory RSAT module and standard PowerShell remoting (WinRM). All SQL queries execute on the remote servers, so no SQL client tools are needed on the scanning machine.</p>
+
+        <div class="arch-layer layer-1">
+            <div class="arch-label">Entry Point</div>
+            <div class="arch-content">
+                <span class="arch-chip">Invoke-DBExplorer</span>
+                <span style="font-size:12px;color:#555;">Main orchestration function &mdash; coordinates all phases sequentially</span>
+            </div>
+        </div>
+        <div class="arch-layer layer-2">
+            <div class="arch-label">Discovery</div>
+            <div class="arch-content">
+                <span class="arch-chip">Get-ADComputerTargets</span>
+                <span class="arch-chip">Invoke-ParallelPortScan</span>
+            </div>
+        </div>
+        <div class="arch-layer layer-3">
+            <div class="arch-label">Access &amp; Auth</div>
+            <div class="arch-content">
+                <span class="arch-chip">Test-WinRMAccess</span>
+                <span class="arch-chip">Get-CredentialFallback</span>
+            </div>
+        </div>
+        <div class="arch-layer layer-4">
+            <div class="arch-label">Instance Detection</div>
+            <div class="arch-content">
+                <span class="arch-chip">Get-SQLInstances</span>
+                <span style="font-size:12px;color:#555;">Registry + Service enumeration via WinRM</span>
+            </div>
+        </div>
+        <div class="arch-layer layer-5">
+            <div class="arch-label">SQL Inventory</div>
+            <div class="arch-content">
+                <span class="arch-chip">Invoke-RemoteSQLQuery</span>
+                <span class="arch-chip">Get-SQLServerConfig</span>
+                <span class="arch-chip">Get-SQLDatabases</span>
+                <span class="arch-chip">Get-SQLBackupStatus</span>
+                <span class="arch-chip">Get-SQLServerSecurity</span>
+                <span class="arch-chip">Get-SQLDatabaseSecurity</span>
+                <span class="arch-chip">Get-SQLAgentJobs</span>
+            </div>
+        </div>
+        <div class="arch-layer layer-6">
+            <div class="arch-label">Reporting</div>
+            <div class="arch-content">
+                <span class="arch-chip">New-ServerReport</span>
+                <span class="arch-chip">New-SummaryReport</span>
+                <span class="arch-chip">ConvertTo-HtmlTable</span>
+                <span class="arch-chip">Get-HtmlHeader</span>
+            </div>
+        </div>
+
+        <div class="callout callout-info" style="margin-top:20px;">
+            <strong>Key Design Principle: WinRM Relay</strong>
+            All SQL queries are executed <em>on the remote server</em> via <code>Invoke-Command</code>. The script sends T-SQL as a string argument. On the remote side, it first tries <code>Invoke-Sqlcmd</code> (SqlServer or SQLPS module). If neither is available, it falls back to <code>System.Data.SqlClient</code> (.NET). This means the scanning machine needs zero SQL tooling.
+        </div>
+    </div>
+</div>
+
+<!-- 2. Parameters -->
+<div class="card" id="parameters">
+    <div class="card-header">
+        <h2>2. Script Parameters</h2>
+        <span class="badge badge-phase">Lines 52-74</span>
+    </div>
+    <div class="card-body">
+        <div class="param-grid">
+            <div class="param-card">
+                <span class="pname">-SearchBase</span><span class="ptype">string</span>
+                <div class="pdesc">AD OU distinguished name to scope the computer search. If omitted, searches the entire domain.</div>
+            </div>
+            <div class="param-card">
+                <span class="pname">-ComputerName</span><span class="ptype">string</span>
+                <div class="pdesc">Comma-separated server names to scan directly, bypassing AD discovery entirely.</div>
+            </div>
+            <div class="param-card">
+                <span class="pname">-Ports</span><span class="ptype">int[]</span>
+                <div class="pdefault">Default: 1433, 1434, 2383, 4022</div>
+                <div class="pdesc">TCP ports to scan for MSSQL services.</div>
+            </div>
+            <div class="param-card">
+                <span class="pname">-PortTimeout</span><span class="ptype">int</span>
+                <div class="pdefault">Default: 1000 (ms)</div>
+                <div class="pdesc">Timeout per port scan connection attempt.</div>
+            </div>
+            <div class="param-card">
+                <span class="pname">-MaxThreads</span><span class="ptype">int</span>
+                <div class="pdefault">Default: 20</div>
+                <div class="pdesc">Maximum parallel threads for the port scanning runspace pool.</div>
+            </div>
+            <div class="param-card">
+                <span class="pname">-OutputPath</span><span class="ptype">string</span>
+                <div class="pdefault">Default: .\DBExplorer_Reports</div>
+                <div class="pdesc">Directory for HTML reports and log files.</div>
+            </div>
+            <div class="param-card">
+                <span class="pname">-IncludeSystemDatabases</span><span class="ptype">switch</span>
+                <div class="pdesc">When set, includes master, model, msdb, and tempdb in the database inventory and per-database security enumeration.</div>
+            </div>
+        </div>
+
+        <table class="port-table" style="margin-top: 20px;">
+            <thead><tr><th>Port</th><th>Service</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr><td class="port-num">1433</td><td>SQL Server (Default Instance)</td><td>Primary database engine listener</td></tr>
+                <tr><td class="port-num">1434</td><td>SQL Server Browser</td><td>Instance discovery / named instance resolution</td></tr>
+                <tr><td class="port-num">2383</td><td>Analysis Services (SSAS)</td><td>Default SSAS instance</td></tr>
+                <tr><td class="port-num">4022</td><td>Service Broker</td><td>SQL Server Service Broker endpoint</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 3. Execution Flow -->
+<div class="card" id="execution-flow">
+    <div class="card-header">
+        <h2>3. Execution Flow</h2>
+        <span class="badge badge-phase">Lines 1606-1884</span>
+    </div>
+    <div class="card-body">
+        <p>The <code>Invoke-DBExplorer</code> function orchestrates 5 sequential phases:</p>
+
+        <div class="flow-diagram">
+            <div class="flow-step">
+                <div class="step-num">1</div>
+                <div class="step-title">AD Discovery</div>
+                <div class="step-detail">Find computers via<br>Get-ADComputer or<br>-ComputerName list</div>
+            </div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-step">
+                <div class="step-num">2</div>
+                <div class="step-title">Port Scan</div>
+                <div class="step-detail">Parallel TCP scan<br>on 1433, 1434,<br>2383, 4022</div>
+            </div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-step">
+                <div class="step-num">3</div>
+                <div class="step-title">Inventory</div>
+                <div class="step-detail">WinRM &rarr; detect instances<br>&rarr; config, DBs, backups,<br>security, agent jobs</div>
+            </div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-step">
+                <div class="step-num">4</div>
+                <div class="step-title">Per-Server Reports</div>
+                <div class="step-detail">Generate self-contained<br>HTML for each<br>SQL host</div>
+            </div>
+            <div class="flow-arrow">&rarr;</div>
+            <div class="flow-step">
+                <div class="step-num">5</div>
+                <div class="step-title">Summary</div>
+                <div class="step-detail">Index page with links<br>to all server reports<br>+ open in browser</div>
+            </div>
+        </div>
+
+        <div class="callout callout-tip">
+            <strong>Per-Server Loop (Phase 3)</strong>
+            For each SQL host, the script: tests WinRM &rarr; prompts for credentials if needed &rarr; detects instances via registry/services &rarr; runs 6 categories of SQL queries &rarr; enumerates per-database security for every ONLINE database &rarr; generates an HTML report. If any step fails, the error is logged and the script continues to the next step or server.
+        </div>
+    </div>
+</div>
+
+<!-- 4. Phase 1: AD Discovery -->
+<div class="card" id="phase1">
+    <div class="card-header">
+        <h2>4. Phase 1: AD Discovery</h2>
+        <span class="badge badge-func">Get-ADComputerTargets</span>
+        <span class="badge badge-phase">Lines 117-154</span>
+    </div>
+    <div class="card-body">
+        <p>Discovers target computers from Active Directory. Requires the <code>ActiveDirectory</code> PowerShell module (RSAT). If <code>-ComputerName</code> is provided, this phase is skipped entirely.</p>
+
+        <p><strong>Logic:</strong></p>
+        <ol style="margin-left: 20px; font-size: 14px;">
+            <li>Import <code>ActiveDirectory</code> module (exit with error if unavailable)</li>
+            <li>Query <code>Get-ADComputer</code> with filter <code>Enabled -eq 'True'</code></li>
+            <li>Request properties: <code>DNSHostName</code>, <code>OperatingSystem</code>, <code>IPv4Address</code></li>
+            <li>Filter to machines with OS matching <code>*Windows Server*</code> or <code>*Windows*</code></li>
+            <li>If <code>-SearchBase</code> provided, scopes the LDAP query to that OU</li>
+        </ol>
+
+        <div class="callout callout-warn" style="margin-top: 14px;">
+            <strong>Bypass</strong>
+            When <code>-ComputerName "SQL01,SQL02"</code> is provided, the main function splits on commas and creates synthetic computer objects directly, completely skipping the AD module dependency.
+        </div>
+    </div>
+</div>
+
+<!-- 5. Phase 2: Port Scanning -->
+<div class="card" id="phase2">
+    <div class="card-header">
+        <h2>5. Phase 2: Parallel Port Scanning</h2>
+        <span class="badge badge-func">Invoke-ParallelPortScan</span>
+        <span class="badge badge-phase">Lines 160-258</span>
+    </div>
+    <div class="card-body">
+        <p>Scans all discovered computers for open MSSQL ports using a <strong>runspace pool</strong> with asynchronous TCP socket connections. This is significantly faster than <code>Test-NetConnection</code>.</p>
+
+        <p><strong>How it works:</strong></p>
+        <ol style="margin-left: 20px; font-size: 14px;">
+            <li>Create a runspace pool with <code>[runspacefactory]::CreateRunspacePool(1, $MaxThreads)</code></li>
+            <li>For each (computer, port) combination, spawn a PowerShell runspace that:
+                <ul style="margin-left: 16px; margin-top: 4px;">
+                    <li>Creates a <code>System.Net.Sockets.TcpClient</code></li>
+                    <li>Calls <code>BeginConnect()</code> for a non-blocking connection attempt</li>
+                    <li>Waits up to <code>$Timeout</code> ms via <code>AsyncWaitHandle.WaitOne()</code></li>
+                    <li>Returns a <code>PSCustomObject</code> with <code>Computer</code>, <code>Port</code>, <code>IsOpen</code></li>
+                </ul>
+            </li>
+            <li>Collect all results, filter to open ports, deduplicate to unique hosts</li>
+            <li>Progress bar updates every 50 checks</li>
+        </ol>
+
+        <div class="callout callout-info" style="margin-top: 14px;">
+            <strong>Performance</strong>
+            With 20 threads (default) and 1s timeout, scanning 500 computers across 4 ports = 2,000 checks completes in roughly 100 seconds. Increasing <code>-MaxThreads</code> scales linearly up to network/CPU limits.
+        </div>
+    </div>
+</div>
+
+<!-- 6. Phase 3: WinRM & Credentials -->
+<div class="card" id="phase3">
+    <div class="card-header">
+        <h2>6. Phase 3: WinRM &amp; Credential Fallback</h2>
+        <span class="badge badge-security">Authentication</span>
+        <span class="badge badge-phase">Lines 264-330</span>
+    </div>
+    <div class="card-body">
+        <p>Before inventorying each SQL host, the script validates WinRM connectivity. If the current user's credentials fail, it offers an interactive fallback:</p>
+
+        <div class="credential-flow">
+            <div class="cred-step cred-try">
+                <div class="cred-icon">1</div>
+                <div><strong>Try current Windows credentials</strong> &mdash; <code>Invoke-Command -ScriptBlock { $env:COMPUTERNAME }</code></div>
+            </div>
+            <div class="cred-step cred-ok">
+                <div class="cred-icon">&check;</div>
+                <div><strong>Success?</strong> Proceed to inventory with current credentials</div>
+            </div>
+            <div class="cred-step cred-fail">
+                <div class="cred-icon">2</div>
+                <div><strong>Failed?</strong> Check credential cache for this server</div>
+            </div>
+            <div class="cred-step cred-prompt">
+                <div class="cred-icon">3</div>
+                <div><strong>Prompt user:</strong> [W] Windows credentials &mdash; [S] SQL Authentication &mdash; [K] Skip server</div>
+            </div>
+            <div class="cred-step cred-ok">
+                <div class="cred-icon">W</div>
+                <div><strong>Windows auth:</strong> <code>Get-Credential</code> &rarr; retry WinRM with new PSCredential &rarr; proceed if successful</div>
+            </div>
+            <div class="cred-step cred-ok">
+                <div class="cred-icon">S</div>
+                <div><strong>SQL auth:</strong> <code>Get-Credential</code> &rarr; pass username/password into <code>Invoke-Sqlcmd</code> or connection string on the remote side (WinRM still uses current user for the remote session)</div>
+            </div>
+            <div class="cred-step cred-skip">
+                <div class="cred-icon">K</div>
+                <div><strong>Skip:</strong> Server added to failed list with reason, script continues to next host</div>
+            </div>
+        </div>
+
+        <div class="callout callout-info">
+            <strong>Credential Caching</strong>
+            Credentials are cached in <code>$script:CredentialCache</code> (a hashtable keyed by server name) for the duration of the script run. If the same server is encountered again, cached credentials are reused without re-prompting.
+        </div>
+    </div>
+</div>
+
+<!-- 7. Phase 4: Instance Detection -->
+<div class="card" id="phase4">
+    <div class="card-header">
+        <h2>7. Phase 4: SQL Instance Detection</h2>
+        <span class="badge badge-func">Get-SQLInstances</span>
+        <span class="badge badge-phase">Lines 336-410</span>
+    </div>
+    <div class="card-body">
+        <p>Once WinRM access is confirmed, the script detects all SQL Server instances on the remote machine using two methods executed inside a remote scriptblock:</p>
+
+        <table class="func-table">
+            <thead><tr><th>Method</th><th>Technique</th><th>Details</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td><strong>1. Registry</strong></td>
+                    <td><code>Get-ItemProperty</code></td>
+                    <td>Reads <code>HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL</code>. Each property name is an instance name (MSSQLSERVER = default). Filters out PS metadata properties.</td>
+                </tr>
+                <tr>
+                    <td><strong>2. Services</strong></td>
+                    <td><code>Get-Service</code></td>
+                    <td>Queries for services matching <code>MSSQL$*</code> and <code>MSSQLSERVER</code> that are Running. Extracts instance names from service names. Deduplicates against registry results.</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p style="margin-top: 14px;">If neither method returns results, the script assumes a default instance (<code>MSSQLSERVER</code>) and attempts to query it anyway.</p>
+
+        <p>Each instance is represented as: <code>{ InstanceName, InternalName, Source }</code>. The <code>InstanceName</code> is "DEFAULT" for the default instance, or the named instance name (e.g., "SQLEXPRESS").</p>
+    </div>
+</div>
+
+<!-- 8. Phase 5: SQL Inventory -->
+<div class="card" id="phase5">
+    <div class="card-header">
+        <h2>8. Phase 5: SQL Inventory Collection</h2>
+        <span class="badge badge-core">Core Logic</span>
+        <span class="badge badge-phase">Lines 416-925</span>
+    </div>
+    <div class="card-body">
+        <p>For each detected instance, the script collects 6 categories of data through the <code>Invoke-RemoteSQLQuery</code> function:</p>
+
+        <p><strong>The <code>Invoke-RemoteSQLQuery</code> function (lines 416-515)</strong> is the central query execution engine. It:</p>
+        <ol style="margin-left: 20px; font-size: 14px;">
+            <li>Builds <code>Invoke-Command</code> parameters (ComputerName, optional Credential)</li>
+            <li>Constructs the server instance string: <code>localhost</code> for DEFAULT, <code>localhost\InstanceName</code> for named</li>
+            <li>Sends a scriptblock to the remote machine that:
+                <ul style="margin-left: 16px; margin-top: 4px;">
+                    <li>Tries <code>Import-Module SqlServer</code>, then <code>Import-Module SQLPS</code></li>
+                    <li>If a module loaded: uses <code>Invoke-Sqlcmd</code> with the query</li>
+                    <li>If neither available: builds a <code>System.Data.SqlClient.SqlConnection</code> with connection string, executes via <code>SqlDataAdapter</code></li>
+                    <li>SQL Auth credentials (if provided) are passed as username/password arguments</li>
+                </ul>
+            </li>
+        </ol>
+
+        <table class="func-table" style="margin-top: 16px;">
+            <thead><tr><th>Category</th><th>Function</th><th>Data Collected</th><th>Lines</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td><strong>Server Config</strong></td>
+                    <td><code>Get-SQLServerConfig</code></td>
+                    <td>SERVERPROPERTY values (version, edition, clustering, AlwaysOn), sys.configurations settings, service accounts from dm_server_services, uptime from dm_os_sys_info</td>
+                    <td class="lines">517-605</td>
+                </tr>
+                <tr>
+                    <td><strong>Databases</strong></td>
+                    <td><code>Get-SQLDatabases</code></td>
+                    <td>All databases with state, recovery model, compatibility level, sizes (data + log), file counts, auto-close/shrink flags. Optionally includes system DBs.</td>
+                    <td class="lines">607-658</td>
+                </tr>
+                <tr>
+                    <td><strong>Backup Status</strong></td>
+                    <td><code>Get-SQLBackupStatus</code></td>
+                    <td>Last full/differential/log backup dates per database, days since last full backup, last full backup size. Joined from sys.databases + msdb.dbo.backupset.</td>
+                    <td class="lines">660-695</td>
+                </tr>
+                <tr>
+                    <td><strong>Server Security</strong></td>
+                    <td><code>Get-SQLServerSecurity</code></td>
+                    <td>All server logins (SQL, Windows, Groups) with role memberships aggregated via STRING_AGG (or FOR XML PATH fallback). Server-level explicit permissions.</td>
+                    <td class="lines">697-779</td>
+                </tr>
+                <tr>
+                    <td><strong>Database Security</strong></td>
+                    <td><code>Get-SQLDatabaseSecurity</code></td>
+                    <td>Per-database: users with database role memberships, linked server login, explicit permissions (object-level grants/denies). Iterated for every ONLINE database.</td>
+                    <td class="lines">781-875</td>
+                </tr>
+                <tr>
+                    <td><strong>Agent Jobs</strong></td>
+                    <td><code>Get-SQLAgentJobs</code></td>
+                    <td>All SQL Agent jobs: name, enabled status, owner, last run date/outcome. Uses OUTER APPLY on sysjobhistory for the most recent execution.</td>
+                    <td class="lines">877-925</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-warn" style="margin-top: 14px;">
+            <strong>STRING_AGG Compatibility</strong>
+            The security queries use <code>STRING_AGG()</code> to aggregate role names into comma-separated lists. This requires SQL Server 2017+. If it fails, the script automatically catches the error and retries with the <code>STUFF(... FOR XML PATH(''))</code> pattern, which works on SQL Server 2008+.
+        </div>
+    </div>
+</div>
+
+<!-- 9. SQL Queries Reference -->
+<div class="card" id="sql-queries">
+    <div class="card-header">
+        <h2>9. SQL Queries Reference</h2>
+        <span class="badge badge-core">T-SQL</span>
+    </div>
+    <div class="card-body">
+        <p>Key system views and DMVs queried by the script:</p>
+
+        <table class="func-table">
+            <thead><tr><th>Query Area</th><th>System Objects Used</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr><td>Server Properties</td><td><code>SERVERPROPERTY()</code></td><td>Version, edition, clustering, AlwaysOn, collation</td></tr>
+                <tr><td>Configuration</td><td><code>sys.configurations</code></td><td>Memory limits, MAXDOP, xp_cmdshell, CLR, etc. (12 key settings)</td></tr>
+                <tr><td>Services</td><td><code>sys.dm_server_services</code></td><td>Service accounts, startup type, IFI status</td></tr>
+                <tr><td>Uptime</td><td><code>sys.dm_os_sys_info</code></td><td>Start time, CPU count, physical memory</td></tr>
+                <tr><td>Databases</td><td><code>sys.databases</code> + <code>sys.master_files</code></td><td>Name, state, recovery model, sizes, file counts</td></tr>
+                <tr><td>Backups</td><td><code>sys.databases</code> + <code>msdb.dbo.backupset</code></td><td>Last full/diff/log backup dates and sizes</td></tr>
+                <tr><td>Server Logins</td><td><code>sys.server_principals</code> + <code>sys.server_role_members</code></td><td>Logins with aggregated role memberships</td></tr>
+                <tr><td>Server Permissions</td><td><code>sys.server_permissions</code> + <code>sys.server_principals</code></td><td>Explicit GRANT/DENY at server level</td></tr>
+                <tr><td>Database Users</td><td><code>sys.database_principals</code> + <code>sys.database_role_members</code> + <code>sys.server_principals</code></td><td>Users, role memberships, linked login (per database)</td></tr>
+                <tr><td>Database Permissions</td><td><code>sys.database_permissions</code> + <code>sys.database_principals</code></td><td>Object-level GRANT/DENY (per database)</td></tr>
+                <tr><td>Agent Jobs</td><td><code>msdb.dbo.sysjobs</code> + <code>msdb.dbo.sysjobhistory</code></td><td>Job list with most recent run status</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 10. HTML Reports -->
+<div class="card" id="reports">
+    <div class="card-header">
+        <h2>10. HTML Report Generation</h2>
+        <span class="badge badge-report">Output</span>
+        <span class="badge badge-phase">Lines 929-1600</span>
+    </div>
+    <div class="card-body">
+        <p>Reports are fully self-contained HTML files with embedded CSS and JavaScript &mdash; no external dependencies, works offline. Two types of reports are generated:</p>
+
+        <h3 style="font-size: 16px; margin: 20px 0 12px; color: #1a237e;">Per-Server Report</h3>
+        <p>Filename pattern: <code>ServerName_yyyyMMdd_HHmmss.html</code></p>
+
+        <div class="report-section-demo">
+            <div class="rsd-header">Report Header <span class="rsd-tag">Always Visible</span></div>
+            <div class="rsd-body">Server name, SQL version, edition, clustered/AlwaysOn status, scan timestamp. Dashboard cards: database count, total size, uptime days, max memory.</div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header">Server Configuration <span class="rsd-tag">Collapsible &mdash; Open by Default</span></div>
+            <div class="rsd-body">
+                <ul>
+                    <li><strong>Configuration Settings table:</strong> sys.configurations values (memory, MAXDOP, security flags)</li>
+                    <li><strong>SQL Services table:</strong> Service accounts, startup types, running status</li>
+                </ul>
+            </div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header">Database Inventory <span class="rsd-tag">Collapsible</span></div>
+            <div class="rsd-body">Table: database name, state, recovery model, compatibility level, data/log sizes, read-only, auto-close, auto-shrink, create date.</div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header">Backup Status <span class="rsd-tag">Collapsible &mdash; Color Coded</span></div>
+            <div class="rsd-body">Table with "Days Since Full Backup" column color-coded:
+                <ul>
+                    <li><span style="color:#28a745;font-weight:600;">Green</span> = 0-1 days</li>
+                    <li><span style="color:#ffc107;font-weight:600;">Yellow</span> = 2-7 days</li>
+                    <li><span style="color:#dc3545;font-weight:600;">Red</span> = 8+ days or "Never"</li>
+                </ul>
+            </div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header">Security &mdash; Server Logins <span class="rsd-tag">Collapsible</span></div>
+            <div class="rsd-body">Login names, types (SQL/Windows/Group), disabled status, aggregated server roles, server-level permissions sub-table.</div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header">Security &mdash; Database Users &amp; Permissions <span class="rsd-tag">Collapsible</span></div>
+            <div class="rsd-body">Sub-sections per database, each with: users &amp; role memberships table, explicit permissions table. Databases sorted alphabetically.</div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header">SQL Agent Jobs <span class="rsd-tag">Collapsible &mdash; Color Coded</span></div>
+            <div class="rsd-body">Job name, enabled, owner, last run date, outcome (<span style="color:#28a745;font-weight:600;">Succeeded</span> / <span style="color:#dc3545;font-weight:600;">Failed</span>), description.</div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header">Warnings &amp; Errors <span class="rsd-tag">Conditional</span></div>
+            <div class="rsd-body">Only appears if errors were encountered during collection. Yellow warning box listing each failed query or connection issue.</div>
+        </div>
+
+        <h3 style="font-size: 16px; margin: 24px 0 12px; color: #1a237e;">Summary Report</h3>
+        <p>Filename pattern: <code>Summary_yyyyMMdd_HHmmss.html</code></p>
+        <ul style="margin-left: 20px; font-size: 14px;">
+            <li>Dashboard: total computers scanned, SQL hosts found, successfully inventoried, failed count</li>
+            <li>Server table: name, version, edition, DB count, total size, backup health (worst-case across all DBs), link to per-server report</li>
+            <li>Failed/skipped servers section (if any): server name + failure reason</li>
+        </ul>
+
+        <div class="callout callout-tip" style="margin-top: 16px;">
+            <strong>Interactivity</strong>
+            All sections are collapsible (click header to toggle). "Expand All" / "Collapse All" links at the top. Print-friendly: all sections expand automatically in print mode via <code>@media print</code>.
+        </div>
+
+        <h3 style="font-size: 16px; margin: 24px 0 12px; color: #1a237e;">Key Report Functions</h3>
+        <table class="func-table">
+            <thead><tr><th>Function</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr><td><code>Get-HtmlHeader</code></td><td>Returns the shared HTML preamble: DOCTYPE, charset, full CSS stylesheet (~180 lines), JavaScript toggle/expand/collapse functions. Does NOT close <code>&lt;/head&gt;</code> so callers can insert <code>&lt;title&gt;</code>.</td></tr>
+                <tr><td><code>ConvertTo-HtmlTable</code></td><td>Generic function converting any <code>PSObject[]</code> to a styled HTML table. Accepts explicit property list, filters out PS metadata properties, applies conditional color coding for backup days, job status, and disabled flags. HTML-encodes all values.</td></tr>
+                <tr><td><code>New-ServerReport</code></td><td>Assembles the full per-server HTML. Extracts metrics from inventory data, builds each section using here-strings and <code>ConvertTo-HtmlTable</code> calls, writes to disk.</td></tr>
+                <tr><td><code>New-SummaryReport</code></td><td>Builds the index page. Calculates aggregate metrics, builds server rows with hyperlinks to per-server reports, includes failed servers section.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 11. Error Handling -->
+<div class="card" id="error-handling">
+    <div class="card-header">
+        <h2>11. Error Handling Strategy</h2>
+    </div>
+    <div class="card-body">
+        <p>The script uses layered error handling to maximize data collection even when individual components fail:</p>
+
+        <div class="error-grid">
+            <div class="eg-header">Scenario</div>
+            <div class="eg-header">Behavior</div>
+
+            <div class="eg-scenario">AD module not available</div>
+            <div class="eg-behavior">Logs error and exits &mdash; unless <code>-ComputerName</code> was provided, in which case AD is never needed</div>
+
+            <div class="eg-scenario">Computer unreachable (port scan)</div>
+            <div class="eg-behavior">Port returns <code>IsOpen = $false</code>, host excluded from inventory. No error logged (expected for non-SQL servers).</div>
+
+            <div class="eg-scenario">WinRM fails (current creds)</div>
+            <div class="eg-behavior">Interactive prompt: Windows creds / SQL auth / Skip. Cached per-server for reuse.</div>
+
+            <div class="eg-scenario">WinRM fails (all creds)</div>
+            <div class="eg-behavior">Server added to <code>$failedServers</code> list with reason. Appears in summary report. Script continues.</div>
+
+            <div class="eg-scenario">Individual SQL query fails</div>
+            <div class="eg-behavior">Error caught, message added to <code>$inventoryData.Errors</code> ArrayList, that section shows "Data unavailable" in report. Remaining queries still execute.</div>
+
+            <div class="eg-scenario">STRING_AGG not supported (&lt; 2017)</div>
+            <div class="eg-behavior">Outer catch triggers, retry with FOR XML PATH fallback query. If that also fails, section logged as unavailable.</div>
+
+            <div class="eg-scenario">Database OFFLINE</div>
+            <div class="eg-behavior">Per-database security enumeration skipped for non-ONLINE databases. Warning logged.</div>
+
+            <div class="eg-scenario">Report generation fails</div>
+            <div class="eg-behavior">Error logged. Server still added to results (without ReportFile). Summary report still generated.</div>
+        </div>
+
+        <div class="callout callout-info" style="margin-top: 16px;">
+            <strong>Logging</strong>
+            The <code>Write-Log</code> function (lines 83-111) outputs to both console (color-coded: Cyan/Yellow/Red/Green) and a timestamped log file in the <code>Logs</code> subdirectory. Log levels: Info [*], Warning [!], Error [-], Success [+].
+        </div>
+    </div>
+</div>
+
+<!-- 12. Function Reference -->
+<div class="card" id="function-ref">
+    <div class="card-header">
+        <h2>12. Complete Function Reference</h2>
+    </div>
+    <div class="card-body">
+        <table class="func-table">
+            <thead><tr><th>Function</th><th>Region</th><th>Lines</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr><td><code>Write-Log</code></td><td>Logging</td><td class="lines">83-111</td><td>Timestamped dual-output logging (console + file) with color coding and level prefixes</td></tr>
+                <tr><td><code>Get-ADComputerTargets</code></td><td>AD Discovery</td><td class="lines">117-154</td><td>Query Active Directory for enabled Windows computers, optional OU scoping</td></tr>
+                <tr><td><code>Invoke-ParallelPortScan</code></td><td>Port Scanner</td><td class="lines">160-258</td><td>Runspace pool TCP port scanner with async sockets, configurable threads and timeout</td></tr>
+                <tr><td><code>Test-WinRMAccess</code></td><td>WinRM &amp; Credentials</td><td class="lines">264-288</td><td>Quick WinRM connectivity test via Invoke-Command</td></tr>
+                <tr><td><code>Get-CredentialFallback</code></td><td>WinRM &amp; Credentials</td><td class="lines">290-330</td><td>Interactive credential prompt with Windows/SQL/Skip options, per-server caching</td></tr>
+                <tr><td><code>Get-SQLInstances</code></td><td>SQL Instance Detection</td><td class="lines">336-410</td><td>Remote registry + service enumeration to find SQL instances</td></tr>
+                <tr><td><code>Invoke-RemoteSQLQuery</code></td><td>SQL Inventory</td><td class="lines">416-515</td><td>Core query engine: WinRM &rarr; Invoke-Sqlcmd or .NET SqlClient fallback</td></tr>
+                <tr><td><code>Get-SQLServerConfig</code></td><td>SQL Inventory</td><td class="lines">517-605</td><td>Collect server properties, sys.configurations, services, uptime</td></tr>
+                <tr><td><code>Get-SQLDatabases</code></td><td>SQL Inventory</td><td class="lines">607-658</td><td>Database inventory with sizes, state, recovery model, settings</td></tr>
+                <tr><td><code>Get-SQLBackupStatus</code></td><td>SQL Inventory</td><td class="lines">660-695</td><td>Last backup dates and days-since-full per database</td></tr>
+                <tr><td><code>Get-SQLServerSecurity</code></td><td>SQL Inventory</td><td class="lines">697-779</td><td>Server logins with role aggregation (STRING_AGG + FOR XML fallback), server permissions</td></tr>
+                <tr><td><code>Get-SQLDatabaseSecurity</code></td><td>SQL Inventory</td><td class="lines">781-875</td><td>Per-database users, role memberships, explicit permissions</td></tr>
+                <tr><td><code>Get-SQLAgentJobs</code></td><td>SQL Inventory</td><td class="lines">877-925</td><td>Agent jobs with last execution status via OUTER APPLY</td></tr>
+                <tr><td><code>ConvertTo-HtmlTable</code></td><td>HTML Report</td><td class="lines">931-998</td><td>Generic PSObject-to-HTML table converter with conditional color coding</td></tr>
+                <tr><td><code>Get-HtmlHeader</code></td><td>HTML Report</td><td class="lines">1000-1202</td><td>Shared HTML/CSS/JS preamble (leaves &lt;head&gt; unclosed for title injection)</td></tr>
+                <tr><td><code>New-ServerReport</code></td><td>HTML Report</td><td class="lines">1204-1426</td><td>Assemble and write per-server HTML report with all inventory sections</td></tr>
+                <tr><td><code>New-SummaryReport</code></td><td>HTML Report</td><td class="lines">1428-1600</td><td>Assemble and write summary index with server table, aggregate metrics, failed list</td></tr>
+                <tr><td><code>Invoke-DBExplorer</code></td><td>Main Orchestration</td><td class="lines">1606-1884</td><td>Entry point: banner, directory setup, 5-phase workflow, final console summary, open browser</td></tr>
+            </tbody>
+        </table>
+
+        <h3 style="font-size: 16px; margin: 24px 0 12px; color: #1a237e;">Script-Scope Variables</h3>
+        <table class="func-table">
+            <thead><tr><th>Variable</th><th>Type</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr><td><code>$script:StartTime</code></td><td>DateTime</td><td>Captured at script start for elapsed time calculation</td></tr>
+                <tr><td><code>$script:LogFile</code></td><td>String</td><td>Path to the log file, set during initialization</td></tr>
+                <tr><td><code>$script:CredentialCache</code></td><td>Hashtable</td><td>Server name &rarr; credential info cache (avoids re-prompting)</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+</div>
+
+<div class="footer-doc">
+    DBExplorer.ps1 Technical Documentation &mdash; Generated for review purposes
+</div>
+
+</body>
+</html>
