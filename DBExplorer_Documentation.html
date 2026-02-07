@@ -329,10 +329,11 @@
         <a href="#phase3"><span class="toc-num">6</span> Phase 3: WinRM &amp; Credentials</a>
         <a href="#phase4"><span class="toc-num">7</span> Phase 4: SQL Instance Detection</a>
         <a href="#phase5"><span class="toc-num">8</span> Phase 5: SQL Inventory</a>
-        <a href="#sql-queries"><span class="toc-num">9</span> SQL Queries Reference</a>
-        <a href="#reports"><span class="toc-num">10</span> HTML Report Generation</a>
-        <a href="#error-handling"><span class="toc-num">11</span> Error Handling</a>
-        <a href="#function-ref"><span class="toc-num">12</span> Function Reference</a>
+        <a href="#security-assessment"><span class="toc-num">9</span> Security Vulnerability Assessment</a>
+        <a href="#sql-queries"><span class="toc-num">10</span> SQL Queries Reference</a>
+        <a href="#reports"><span class="toc-num">11</span> HTML Report Generation</a>
+        <a href="#error-handling"><span class="toc-num">12</span> Error Handling</a>
+        <a href="#function-ref"><span class="toc-num">13</span> Function Reference</a>
     </div>
 </div>
 
@@ -344,7 +345,7 @@
         <h2>1. Architecture Overview</h2>
     </div>
     <div class="card-body">
-        <p>DBExplorer is a <strong>single self-contained .ps1 file</strong> (~1,890 lines) designed to run from any domain-joined Windows PC. It has zero external dependencies beyond the built-in ActiveDirectory RSAT module and standard PowerShell remoting (WinRM). All SQL queries execute on the remote servers, so no SQL client tools are needed on the scanning machine.</p>
+        <p>DBExplorer is a <strong>single self-contained .ps1 file</strong> (~2,200 lines) designed to run from any domain-joined Windows PC. It has zero external dependencies beyond the built-in ActiveDirectory RSAT module and standard PowerShell remoting (WinRM). All SQL queries execute on the remote servers, so no SQL client tools are needed on the scanning machine.</p>
 
         <div class="arch-layer layer-1">
             <div class="arch-label">Entry Point</div>
@@ -384,6 +385,7 @@
                 <span class="arch-chip">Get-SQLServerSecurity</span>
                 <span class="arch-chip">Get-SQLDatabaseSecurity</span>
                 <span class="arch-chip">Get-SQLAgentJobs</span>
+                <span class="arch-chip">Get-SQLSecurityAssessment</span>
             </div>
         </div>
         <div class="arch-layer layer-6">
@@ -461,7 +463,7 @@
 <div class="card" id="execution-flow">
     <div class="card-header">
         <h2>3. Execution Flow</h2>
-        <span class="badge badge-phase">Lines 1606-1884</span>
+        <span class="badge badge-phase">Lines 1919-2199</span>
     </div>
     <div class="card-body">
         <p>The <code>Invoke-DBExplorer</code> function orchestrates 5 sequential phases:</p>
@@ -500,7 +502,7 @@
 
         <div class="callout callout-tip">
             <strong>Per-Server Loop (Phase 3)</strong>
-            For each SQL host, the script: tests WinRM &rarr; prompts for credentials if needed &rarr; detects instances via registry/services &rarr; runs 6 categories of SQL queries &rarr; enumerates per-database security for every ONLINE database &rarr; generates an HTML report. If any step fails, the error is logged and the script continues to the next step or server.
+            For each SQL host, the script: tests WinRM &rarr; prompts for credentials if needed &rarr; detects instances via registry/services &rarr; runs 7 categories of SQL queries &rarr; enumerates per-database security for every ONLINE database &rarr; runs a security vulnerability assessment &rarr; generates an HTML report. If any step fails, the error is logged and the script continues to the next step or server.
         </div>
     </div>
 </div>
@@ -510,7 +512,7 @@
     <div class="card-header">
         <h2>4. Phase 1: AD Discovery</h2>
         <span class="badge badge-func">Get-ADComputerTargets</span>
-        <span class="badge badge-phase">Lines 117-154</span>
+        <span class="badge badge-phase">Lines 120-157</span>
     </div>
     <div class="card-body">
         <p>Discovers target computers from Active Directory. Requires the <code>ActiveDirectory</code> PowerShell module (RSAT). If <code>-ComputerName</code> is provided, this phase is skipped entirely.</p>
@@ -536,7 +538,7 @@
     <div class="card-header">
         <h2>5. Phase 2: Parallel Port Scanning</h2>
         <span class="badge badge-func">Invoke-ParallelPortScan</span>
-        <span class="badge badge-phase">Lines 160-258</span>
+        <span class="badge badge-phase">Lines 163-264</span>
     </div>
     <div class="card-body">
         <p>Scans all discovered computers for open MSSQL ports using a <strong>runspace pool</strong> with asynchronous TCP socket connections. This is significantly faster than <code>Test-NetConnection</code>.</p>
@@ -568,7 +570,7 @@
     <div class="card-header">
         <h2>6. Phase 3: WinRM &amp; Credential Fallback</h2>
         <span class="badge badge-security">Authentication</span>
-        <span class="badge badge-phase">Lines 264-330</span>
+        <span class="badge badge-phase">Lines 268-330</span>
     </div>
     <div class="card-body">
         <p>Before inventorying each SQL host, the script validates WinRM connectivity. If the current user's credentials fail, it offers an interactive fallback:</p>
@@ -588,15 +590,11 @@
             </div>
             <div class="cred-step cred-prompt">
                 <div class="cred-icon">3</div>
-                <div><strong>Prompt user:</strong> [W] Windows credentials &mdash; [S] SQL Authentication &mdash; [K] Skip server</div>
+                <div><strong>Prompt user:</strong> [W] Enter Windows credentials (domain\user) &mdash; [K] Skip this server</div>
             </div>
             <div class="cred-step cred-ok">
                 <div class="cred-icon">W</div>
                 <div><strong>Windows auth:</strong> <code>Get-Credential</code> &rarr; retry WinRM with new PSCredential &rarr; proceed if successful</div>
-            </div>
-            <div class="cred-step cred-ok">
-                <div class="cred-icon">S</div>
-                <div><strong>SQL auth:</strong> <code>Get-Credential</code> &rarr; pass username/password into <code>Invoke-Sqlcmd</code> or connection string on the remote side (WinRM still uses current user for the remote session)</div>
             </div>
             <div class="cred-step cred-skip">
                 <div class="cred-icon">K</div>
@@ -616,7 +614,7 @@
     <div class="card-header">
         <h2>7. Phase 4: SQL Instance Detection</h2>
         <span class="badge badge-func">Get-SQLInstances</span>
-        <span class="badge badge-phase">Lines 336-410</span>
+        <span class="badge badge-phase">Lines 336-412</span>
     </div>
     <div class="card-body">
         <p>Once WinRM access is confirmed, the script detects all SQL Server instances on the remote machine using two methods executed inside a remote scriptblock:</p>
@@ -648,12 +646,12 @@
     <div class="card-header">
         <h2>8. Phase 5: SQL Inventory Collection</h2>
         <span class="badge badge-core">Core Logic</span>
-        <span class="badge badge-phase">Lines 416-925</span>
+        <span class="badge badge-phase">Lines 416-1180</span>
     </div>
     <div class="card-body">
-        <p>For each detected instance, the script collects 6 categories of data through the <code>Invoke-RemoteSQLQuery</code> function:</p>
+        <p>For each detected instance, the script collects 7 categories of data through the <code>Invoke-RemoteSQLQuery</code> function:</p>
 
-        <p><strong>The <code>Invoke-RemoteSQLQuery</code> function (lines 416-515)</strong> is the central query execution engine. It:</p>
+        <p><strong>The <code>Invoke-RemoteSQLQuery</code> function (lines 416-495)</strong> is the central query execution engine. It:</p>
         <ol style="margin-left: 20px; font-size: 14px;">
             <li>Builds <code>Invoke-Command</code> parameters (ComputerName, optional Credential)</li>
             <li>Constructs the server instance string: <code>localhost</code> for DEFAULT, <code>localhost\InstanceName</code> for named</li>
@@ -661,8 +659,7 @@
                 <ul style="margin-left: 16px; margin-top: 4px;">
                     <li>Tries <code>Import-Module SqlServer</code>, then <code>Import-Module SQLPS</code></li>
                     <li>If a module loaded: uses <code>Invoke-Sqlcmd</code> with the query</li>
-                    <li>If neither available: builds a <code>System.Data.SqlClient.SqlConnection</code> with connection string, executes via <code>SqlDataAdapter</code></li>
-                    <li>SQL Auth credentials (if provided) are passed as username/password arguments</li>
+                    <li>If neither available: builds a <code>System.Data.SqlClient.SqlConnection</code> with <code>Integrated Security=SSPI</code>, executes via <code>SqlDataAdapter</code></li>
                 </ul>
             </li>
         </ol>
@@ -674,37 +671,43 @@
                     <td><strong>Server Config</strong></td>
                     <td><code>Get-SQLServerConfig</code></td>
                     <td>SERVERPROPERTY values (version, edition, clustering, AlwaysOn), sys.configurations settings, service accounts from dm_server_services, uptime from dm_os_sys_info</td>
-                    <td class="lines">517-605</td>
+                    <td class="lines">497-583</td>
                 </tr>
                 <tr>
                     <td><strong>Databases</strong></td>
                     <td><code>Get-SQLDatabases</code></td>
                     <td>All databases with state, recovery model, compatibility level, sizes (data + log), file counts, auto-close/shrink flags. Optionally includes system DBs.</td>
-                    <td class="lines">607-658</td>
+                    <td class="lines">585-634</td>
                 </tr>
                 <tr>
                     <td><strong>Backup Status</strong></td>
                     <td><code>Get-SQLBackupStatus</code></td>
                     <td>Last full/differential/log backup dates per database, days since last full backup, last full backup size. Joined from sys.databases + msdb.dbo.backupset.</td>
-                    <td class="lines">660-695</td>
+                    <td class="lines">636-669</td>
                 </tr>
                 <tr>
                     <td><strong>Server Security</strong></td>
                     <td><code>Get-SQLServerSecurity</code></td>
                     <td>All server logins (SQL, Windows, Groups) with role memberships aggregated via STRING_AGG (or FOR XML PATH fallback). Server-level explicit permissions.</td>
-                    <td class="lines">697-779</td>
+                    <td class="lines">671-751</td>
                 </tr>
                 <tr>
                     <td><strong>Database Security</strong></td>
                     <td><code>Get-SQLDatabaseSecurity</code></td>
                     <td>Per-database: users with database role memberships, linked server login, explicit permissions (object-level grants/denies). Iterated for every ONLINE database.</td>
-                    <td class="lines">781-875</td>
+                    <td class="lines">753-845</td>
                 </tr>
                 <tr>
                     <td><strong>Agent Jobs</strong></td>
                     <td><code>Get-SQLAgentJobs</code></td>
                     <td>All SQL Agent jobs: name, enabled status, owner, last run date/outcome. Uses OUTER APPLY on sysjobhistory for the most recent execution.</td>
-                    <td class="lines">877-925</td>
+                    <td class="lines">847-893</td>
+                </tr>
+                <tr>
+                    <td><strong>Security Assessment</strong></td>
+                    <td><code>Get-SQLSecurityAssessment</code></td>
+                    <td>Automated vulnerability checks: xp_cmdshell, CLR, OLE Automation, TRUSTWORTHY databases, sa account status, sysadmin count, BUILTIN\Administrators, guest access, orphaned users, password policy, cross-db ownership chaining, mixed auth mode. Each finding includes severity (Critical/Warning/Info), detail, and remediation.</td>
+                    <td class="lines">895-1180</td>
                 </tr>
             </tbody>
         </table>
@@ -716,10 +719,56 @@
     </div>
 </div>
 
-<!-- 9. SQL Queries Reference -->
+<!-- 9. Security Vulnerability Assessment -->
+<div class="card" id="security-assessment">
+    <div class="card-header">
+        <h2>9. Security Vulnerability Assessment</h2>
+        <span class="badge badge-security">New</span>
+        <span class="badge badge-func">Get-SQLSecurityAssessment</span>
+        <span class="badge badge-phase">Lines 895-1180</span>
+    </div>
+    <div class="card-body">
+        <p>After collecting inventory data, the script runs an automated security assessment against each SQL instance. The <code>Get-SQLSecurityAssessment</code> function executes 10 individual check categories, each as a separate try/catch query to maximize results even if some checks fail.</p>
+
+        <p>Each finding is returned as a <code>PSCustomObject</code> with properties: <strong>Finding</strong>, <strong>Severity</strong> (Critical/Warning/Info), <strong>CurrentValue</strong>, <strong>Detail</strong>, and <strong>Remediation</strong>.</p>
+
+        <table class="func-table" style="margin-top: 16px;">
+            <thead><tr><th>Check</th><th>Severity</th><th>What It Detects</th><th>Remediation</th></tr></thead>
+            <tbody>
+                <tr><td><strong>xp_cmdshell</strong></td><td><span style="color:#dc3545;font-weight:600;">Critical</span></td><td>OS command execution enabled from SQL</td><td><code>sp_configure 'xp_cmdshell', 0</code></td></tr>
+                <tr><td><strong>CLR enabled</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>.NET assemblies can execute inside SQL Server</td><td><code>sp_configure 'clr enabled', 0</code></td></tr>
+                <tr><td><strong>OLE Automation</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>COM object instantiation from T-SQL</td><td><code>sp_configure 'Ole Automation Procedures', 0</code></td></tr>
+                <tr><td><strong>Ad Hoc Queries</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>OPENROWSET/OPENDATASOURCE without linked server</td><td><code>sp_configure 'Ad Hoc Distributed Queries', 0</code></td></tr>
+                <tr><td><strong>Cross-DB Chaining</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>Ownership chains can bypass database permissions</td><td><code>sp_configure 'cross db ownership chaining', 0</code></td></tr>
+                <tr><td><strong>Remote Access / DAC / Startup Procs / DB Mail</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span>/<span style="color:#28a745;font-weight:600;">Info</span></td><td>Various attack surface configurations</td><td>Disable via <code>sp_configure</code></td></tr>
+                <tr><td><strong>Mixed Auth Mode</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>SQL + Windows auth instead of Windows-only</td><td>Switch to Windows Authentication Only</td></tr>
+                <tr><td><strong>sa Account</strong></td><td><span style="color:#dc3545;font-weight:600;">Critical</span></td><td>Built-in sa enabled, no password policy/expiration</td><td><code>ALTER LOGIN [sa] DISABLE</code></td></tr>
+                <tr><td><strong>Sysadmin Count</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>More than 3 sysadmin role members</td><td>Review and remove unnecessary sysadmins</td></tr>
+                <tr><td><strong>TRUSTWORTHY DBs</strong></td><td><span style="color:#dc3545;font-weight:600;">Critical</span></td><td>User databases with TRUSTWORTHY ON (privilege escalation path)</td><td><code>ALTER DATABASE [x] SET TRUSTWORTHY OFF</code></td></tr>
+                <tr><td><strong>Guest Access</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>Guest user has CONNECT in user databases</td><td><code>REVOKE CONNECT FROM guest</code></td></tr>
+                <tr><td><strong>BUILTIN\Admins</strong></td><td><span style="color:#dc3545;font-weight:600;">Critical</span></td><td>All local administrators have SQL sysadmin access</td><td><code>DROP LOGIN [BUILTIN\Administrators]</code></td></tr>
+                <tr><td><strong>Public Permissions</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>Public role has extra server permissions beyond defaults</td><td><code>REVOKE &lt;perm&gt; FROM public</code></td></tr>
+                <tr><td><strong>Orphaned Users</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>Database users with no matching server login</td><td><code>DROP USER [x]</code> or remap</td></tr>
+                <tr><td><strong>Weak Passwords</strong></td><td><span style="color:#ffc107;font-weight:600;">Warning</span></td><td>SQL logins with password policy disabled</td><td><code>ALTER LOGIN [x] WITH CHECK_POLICY = ON</code></td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-warn" style="margin-top: 14px;">
+            <strong>Cross-Database Checks</strong>
+            The guest access and orphaned users checks use dynamic SQL (<code>sp_executesql</code>) to iterate all online user databases, since <code>sys.database_permissions</code> and <code>sys.database_principals</code> are database-scoped views that only return results for the current database context.
+        </div>
+
+        <div class="callout callout-info" style="margin-top: 14px;">
+            <strong>Fault Tolerance</strong>
+            Each of the 10 check categories runs in its own try/catch block. If a single check fails (e.g., due to insufficient permissions), the remaining checks still execute and their findings are included in the report.
+        </div>
+    </div>
+</div>
+
+<!-- 10. SQL Queries Reference -->
 <div class="card" id="sql-queries">
     <div class="card-header">
-        <h2>9. SQL Queries Reference</h2>
+        <h2>10. SQL Queries Reference</h2>
         <span class="badge badge-core">T-SQL</span>
     </div>
     <div class="card-body">
@@ -739,6 +788,8 @@
                 <tr><td>Database Users</td><td><code>sys.database_principals</code> + <code>sys.database_role_members</code> + <code>sys.server_principals</code></td><td>Users, role memberships, linked login (per database)</td></tr>
                 <tr><td>Database Permissions</td><td><code>sys.database_permissions</code> + <code>sys.database_principals</code></td><td>Object-level GRANT/DENY (per database)</td></tr>
                 <tr><td>Agent Jobs</td><td><code>msdb.dbo.sysjobs</code> + <code>msdb.dbo.sysjobhistory</code></td><td>Job list with most recent run status</td></tr>
+                <tr><td>Security Assessment</td><td><code>sys.configurations</code>, <code>sys.sql_logins</code>, <code>sys.server_role_members</code>, <code>sys.databases</code></td><td>xp_cmdshell, CLR, OLE Automation, TRUSTWORTHY, sa status, sysadmin count</td></tr>
+                <tr><td>Security Assessment</td><td><code>sys.server_principals</code>, <code>sys.server_permissions</code>, <code>sys.database_permissions</code></td><td>BUILTIN\Administrators, public permissions, guest access, orphaned users</td></tr>
             </tbody>
         </table>
     </div>
@@ -747,9 +798,9 @@
 <!-- 10. HTML Reports -->
 <div class="card" id="reports">
     <div class="card-header">
-        <h2>10. HTML Report Generation</h2>
+        <h2>11. HTML Report Generation</h2>
         <span class="badge badge-report">Output</span>
-        <span class="badge badge-phase">Lines 929-1600</span>
+        <span class="badge badge-phase">Lines 1184-1915</span>
     </div>
     <div class="card-body">
         <p>Reports are fully self-contained HTML files with embedded CSS and JavaScript &mdash; no external dependencies, works offline. Two types of reports are generated:</p>
@@ -759,7 +810,19 @@
 
         <div class="report-section-demo">
             <div class="rsd-header">Report Header <span class="rsd-tag">Always Visible</span></div>
-            <div class="rsd-body">Server name, SQL version, edition, clustered/AlwaysOn status, scan timestamp. Dashboard cards: database count, total size, uptime days, max memory.</div>
+            <div class="rsd-body">Server name, SQL version, edition, clustered/AlwaysOn status, scan timestamp. Dashboard cards: database count, total size, uptime days, max memory, <strong>security findings count</strong> (color-coded: red if critical, yellow if warnings, green if clean).</div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header" style="border-left-color: #c62828;">Security Assessment <span class="rsd-tag" style="background:#fce4ec;color:#c62828;">First Section &mdash; Auto-expands if Critical</span></div>
+            <div class="rsd-body">
+                Automated vulnerability scan results. Table columns: Finding, Severity, Current Value, Detail, Remediation. Severity column is color-coded:
+                <ul>
+                    <li><span style="color:#dc3545;font-weight:600;">Critical</span> = xp_cmdshell enabled, sa enabled, TRUSTWORTHY databases, BUILTIN\Administrators</li>
+                    <li><span style="color:#ffc107;font-weight:600;">Warning</span> = CLR, OLE Automation, mixed auth, excessive sysadmins, guest access, orphaned users, weak password policies</li>
+                    <li><span style="color:#28a745;font-weight:600;">Info</span> = Database Mail XPs, Remote DAC</li>
+                </ul>
+                Section header shows finding summary (e.g., "3 Critical, 5 Warning, 1 Info"). Auto-expands when Critical findings are present.
+            </div>
         </div>
         <div class="report-section-demo">
             <div class="rsd-header">Server Configuration <span class="rsd-tag">Collapsible &mdash; Open by Default</span></div>
@@ -804,8 +867,8 @@
         <h3 style="font-size: 16px; margin: 24px 0 12px; color: #1a237e;">Summary Report</h3>
         <p>Filename pattern: <code>Summary_yyyyMMdd_HHmmss.html</code></p>
         <ul style="margin-left: 20px; font-size: 14px;">
-            <li>Dashboard: total computers scanned, SQL hosts found, successfully inventoried, failed count</li>
-            <li>Server table: name, version, edition, DB count, total size, backup health (worst-case across all DBs), link to per-server report</li>
+            <li>Dashboard: total computers scanned, SQL hosts found, successfully inventoried, failed count, <strong>total security findings</strong> (color-coded)</li>
+            <li>Server table: name, version, edition, DB count, total size, backup health, <strong>security status</strong> (Critical/Warning/Clean with color coding), link to per-server report</li>
             <li>Failed/skipped servers section (if any): server name + failure reason</li>
         </ul>
 
@@ -819,7 +882,7 @@
             <thead><tr><th>Function</th><th>Purpose</th></tr></thead>
             <tbody>
                 <tr><td><code>Get-HtmlHeader</code></td><td>Returns the shared HTML preamble: DOCTYPE, charset, full CSS stylesheet (~180 lines), JavaScript toggle/expand/collapse functions. Does NOT close <code>&lt;/head&gt;</code> so callers can insert <code>&lt;title&gt;</code>.</td></tr>
-                <tr><td><code>ConvertTo-HtmlTable</code></td><td>Generic function converting any <code>PSObject[]</code> to a styled HTML table. Accepts explicit property list, filters out PS metadata properties, applies conditional color coding for backup days, job status, and disabled flags. HTML-encodes all values.</td></tr>
+                <tr><td><code>ConvertTo-HtmlTable</code></td><td>Generic function converting any <code>PSObject[]</code> to a styled HTML table. Accepts explicit property list, filters out PS metadata properties, applies conditional color coding for backup days, job status, disabled flags, and security severity levels (Critical/Warning/Info). HTML-encodes all values.</td></tr>
                 <tr><td><code>New-ServerReport</code></td><td>Assembles the full per-server HTML. Extracts metrics from inventory data, builds each section using here-strings and <code>ConvertTo-HtmlTable</code> calls, writes to disk.</td></tr>
                 <tr><td><code>New-SummaryReport</code></td><td>Builds the index page. Calculates aggregate metrics, builds server rows with hyperlinks to per-server reports, includes failed servers section.</td></tr>
             </tbody>
@@ -830,7 +893,7 @@
 <!-- 11. Error Handling -->
 <div class="card" id="error-handling">
     <div class="card-header">
-        <h2>11. Error Handling Strategy</h2>
+        <h2>12. Error Handling Strategy</h2>
     </div>
     <div class="card-body">
         <p>The script uses layered error handling to maximize data collection even when individual components fail:</p>
@@ -846,7 +909,7 @@
             <div class="eg-behavior">Port returns <code>IsOpen = $false</code>, host excluded from inventory. No error logged (expected for non-SQL servers).</div>
 
             <div class="eg-scenario">WinRM fails (current creds)</div>
-            <div class="eg-behavior">Interactive prompt: Windows creds / SQL auth / Skip. Cached per-server for reuse.</div>
+            <div class="eg-behavior">Interactive prompt: Windows creds / Skip. Cached per-server for reuse.</div>
 
             <div class="eg-scenario">WinRM fails (all creds)</div>
             <div class="eg-behavior">Server added to <code>$failedServers</code> list with reason. Appears in summary report. Script continues.</div>
@@ -866,7 +929,7 @@
 
         <div class="callout callout-info" style="margin-top: 16px;">
             <strong>Logging</strong>
-            The <code>Write-Log</code> function (lines 83-111) outputs to both console (color-coded: Cyan/Yellow/Red/Green) and a timestamped log file in the <code>Logs</code> subdirectory. Log levels: Info [*], Warning [!], Error [-], Success [+].
+            The <code>Write-Log</code> function (lines 83-114) outputs to both console (color-coded: Cyan/Yellow/Red/Green) and a timestamped log file in the <code>Logs</code> subdirectory. Log levels: Info [*], Warning [!], Error [-], Success [+].
         </div>
     </div>
 </div>
@@ -874,30 +937,31 @@
 <!-- 12. Function Reference -->
 <div class="card" id="function-ref">
     <div class="card-header">
-        <h2>12. Complete Function Reference</h2>
+        <h2>13. Complete Function Reference</h2>
     </div>
     <div class="card-body">
         <table class="func-table">
             <thead><tr><th>Function</th><th>Region</th><th>Lines</th><th>Purpose</th></tr></thead>
             <tbody>
-                <tr><td><code>Write-Log</code></td><td>Logging</td><td class="lines">83-111</td><td>Timestamped dual-output logging (console + file) with color coding and level prefixes</td></tr>
-                <tr><td><code>Get-ADComputerTargets</code></td><td>AD Discovery</td><td class="lines">117-154</td><td>Query Active Directory for enabled Windows computers, optional OU scoping</td></tr>
-                <tr><td><code>Invoke-ParallelPortScan</code></td><td>Port Scanner</td><td class="lines">160-258</td><td>Runspace pool TCP port scanner with async sockets, configurable threads and timeout</td></tr>
-                <tr><td><code>Test-WinRMAccess</code></td><td>WinRM &amp; Credentials</td><td class="lines">264-288</td><td>Quick WinRM connectivity test via Invoke-Command</td></tr>
-                <tr><td><code>Get-CredentialFallback</code></td><td>WinRM &amp; Credentials</td><td class="lines">290-330</td><td>Interactive credential prompt with Windows/SQL/Skip options, per-server caching</td></tr>
+                <tr><td><code>Write-Log</code></td><td>Logging</td><td class="lines">83-114</td><td>Timestamped dual-output logging (console + file) with color coding and level prefixes</td></tr>
+                <tr><td><code>Get-ADComputerTargets</code></td><td>AD Discovery</td><td class="lines">120-157</td><td>Query Active Directory for enabled Windows computers, optional OU scoping</td></tr>
+                <tr><td><code>Invoke-ParallelPortScan</code></td><td>Port Scanner</td><td class="lines">163-264</td><td>Runspace pool TCP port scanner with async sockets, configurable threads and timeout</td></tr>
+                <tr><td><code>Test-WinRMAccess</code></td><td>WinRM &amp; Credentials</td><td class="lines">270-294</td><td>Quick WinRM connectivity test via Invoke-Command</td></tr>
+                <tr><td><code>Get-CredentialFallback</code></td><td>WinRM &amp; Credentials</td><td class="lines">296-330</td><td>Interactive credential prompt with Windows/Skip options, per-server caching</td></tr>
                 <tr><td><code>Get-SQLInstances</code></td><td>SQL Instance Detection</td><td class="lines">336-410</td><td>Remote registry + service enumeration to find SQL instances</td></tr>
-                <tr><td><code>Invoke-RemoteSQLQuery</code></td><td>SQL Inventory</td><td class="lines">416-515</td><td>Core query engine: WinRM &rarr; Invoke-Sqlcmd or .NET SqlClient fallback</td></tr>
-                <tr><td><code>Get-SQLServerConfig</code></td><td>SQL Inventory</td><td class="lines">517-605</td><td>Collect server properties, sys.configurations, services, uptime</td></tr>
-                <tr><td><code>Get-SQLDatabases</code></td><td>SQL Inventory</td><td class="lines">607-658</td><td>Database inventory with sizes, state, recovery model, settings</td></tr>
-                <tr><td><code>Get-SQLBackupStatus</code></td><td>SQL Inventory</td><td class="lines">660-695</td><td>Last backup dates and days-since-full per database</td></tr>
-                <tr><td><code>Get-SQLServerSecurity</code></td><td>SQL Inventory</td><td class="lines">697-779</td><td>Server logins with role aggregation (STRING_AGG + FOR XML fallback), server permissions</td></tr>
-                <tr><td><code>Get-SQLDatabaseSecurity</code></td><td>SQL Inventory</td><td class="lines">781-875</td><td>Per-database users, role memberships, explicit permissions</td></tr>
-                <tr><td><code>Get-SQLAgentJobs</code></td><td>SQL Inventory</td><td class="lines">877-925</td><td>Agent jobs with last execution status via OUTER APPLY</td></tr>
-                <tr><td><code>ConvertTo-HtmlTable</code></td><td>HTML Report</td><td class="lines">931-998</td><td>Generic PSObject-to-HTML table converter with conditional color coding</td></tr>
-                <tr><td><code>Get-HtmlHeader</code></td><td>HTML Report</td><td class="lines">1000-1202</td><td>Shared HTML/CSS/JS preamble (leaves &lt;head&gt; unclosed for title injection)</td></tr>
-                <tr><td><code>New-ServerReport</code></td><td>HTML Report</td><td class="lines">1204-1426</td><td>Assemble and write per-server HTML report with all inventory sections</td></tr>
-                <tr><td><code>New-SummaryReport</code></td><td>HTML Report</td><td class="lines">1428-1600</td><td>Assemble and write summary index with server table, aggregate metrics, failed list</td></tr>
-                <tr><td><code>Invoke-DBExplorer</code></td><td>Main Orchestration</td><td class="lines">1606-1884</td><td>Entry point: banner, directory setup, 5-phase workflow, final console summary, open browser</td></tr>
+                <tr><td><code>Invoke-RemoteSQLQuery</code></td><td>SQL Inventory</td><td class="lines">416-495</td><td>Core query engine: WinRM &rarr; Invoke-Sqlcmd or .NET SqlClient fallback (Integrated Security)</td></tr>
+                <tr><td><code>Get-SQLServerConfig</code></td><td>SQL Inventory</td><td class="lines">497-583</td><td>Collect server properties, sys.configurations, services, uptime</td></tr>
+                <tr><td><code>Get-SQLDatabases</code></td><td>SQL Inventory</td><td class="lines">585-634</td><td>Database inventory with sizes, state, recovery model, settings</td></tr>
+                <tr><td><code>Get-SQLBackupStatus</code></td><td>SQL Inventory</td><td class="lines">636-669</td><td>Last backup dates and days-since-full per database</td></tr>
+                <tr><td><code>Get-SQLServerSecurity</code></td><td>SQL Inventory</td><td class="lines">671-751</td><td>Server logins with role aggregation (STRING_AGG + FOR XML fallback), server permissions</td></tr>
+                <tr><td><code>Get-SQLDatabaseSecurity</code></td><td>SQL Inventory</td><td class="lines">753-845</td><td>Per-database users, role memberships, explicit permissions</td></tr>
+                <tr><td><code>Get-SQLAgentJobs</code></td><td>SQL Inventory</td><td class="lines">847-893</td><td>Agent jobs with last execution status via OUTER APPLY</td></tr>
+                <tr><td><code>Get-SQLSecurityAssessment</code></td><td>SQL Inventory</td><td class="lines">895-1180</td><td>Automated vulnerability assessment: 10 check categories covering dangerous configs, auth mode, sa status, sysadmin count, TRUSTWORTHY, guest access, BUILTIN\Admins, public permissions, orphaned users, password policy. Returns findings with severity, detail, and remediation.</td></tr>
+                <tr><td><code>ConvertTo-HtmlTable</code></td><td>HTML Report</td><td class="lines">1186-1260</td><td>Generic PSObject-to-HTML table converter with conditional color coding (backup days, job status, severity levels)</td></tr>
+                <tr><td><code>Get-HtmlHeader</code></td><td>HTML Report</td><td class="lines">1262-1464</td><td>Shared HTML/CSS/JS preamble (leaves &lt;head&gt; unclosed for title injection)</td></tr>
+                <tr><td><code>New-ServerReport</code></td><td>HTML Report</td><td class="lines">1466-1717</td><td>Assemble and write per-server HTML report with all inventory sections including security assessment</td></tr>
+                <tr><td><code>New-SummaryReport</code></td><td>HTML Report</td><td class="lines">1719-1913</td><td>Assemble and write summary index with server table, aggregate metrics, security status, failed list</td></tr>
+                <tr><td><code>Invoke-DBExplorer</code></td><td>Main Orchestration</td><td class="lines">1919-2199</td><td>Entry point: banner, directory setup, 5-phase workflow, final console summary, open browser</td></tr>
             </tbody>
         </table>
 
@@ -907,7 +971,7 @@
             <tbody>
                 <tr><td><code>$script:StartTime</code></td><td>DateTime</td><td>Captured at script start for elapsed time calculation</td></tr>
                 <tr><td><code>$script:LogFile</code></td><td>String</td><td>Path to the log file, set during initialization</td></tr>
-                <tr><td><code>$script:CredentialCache</code></td><td>Hashtable</td><td>Server name &rarr; credential info cache (avoids re-prompting)</td></tr>
+                <tr><td><code>$script:CredentialCache</code></td><td>Hashtable</td><td>Server name &rarr; PSCredential cache (avoids re-prompting for Windows credentials)</td></tr>
             </tbody>
         </table>
     </div>
