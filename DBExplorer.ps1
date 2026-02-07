@@ -106,7 +106,9 @@ function Write-Log {
     Write-Host "$prefix $Message" -ForegroundColor $colors[$Level]
 
     if ($script:LogFile) {
-        "$timestamp [$Level] $Message" | Out-File -FilePath $script:LogFile -Append -Encoding UTF8
+        # Use .NET to append UTF8 without BOM (PS5 Out-File -Encoding UTF8 adds BOM)
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::AppendAllText($script:LogFile, "$timestamp [$Level] $Message`r`n", $utf8NoBom)
     }
 }
 
@@ -229,7 +231,7 @@ function Invoke-ParallelPortScan {
     foreach ($job in $jobs) {
         try {
             $output = $job.Pipe.EndInvoke($job.Result)
-            # EndInvoke returns a PSDataCollection — iterate to extract the actual PSCustomObject(s)
+            # EndInvoke returns a PSDataCollection - iterate to extract the actual PSCustomObject(s)
             foreach ($item in $output) {
                 if ($item) {
                     [void]$results.Add($item)
@@ -1423,7 +1425,8 @@ function New-ServerReport {
 
     $fileName = "$($Computer -replace '[\\/:*?"<>|]', '_')_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
     $filePath = Join-Path $OutputPath $fileName
-    $html.ToString() | Out-File -FilePath $filePath -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($filePath, $html.ToString(), $utf8NoBom)
     Write-Log "  Report saved: $filePath" -Level Success
     return $filePath
 }
@@ -1597,7 +1600,8 @@ function New-SummaryReport {
 "@)
 
     $filePath = Join-Path $OutputPath "Summary_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
-    $html.ToString() | Out-File -FilePath $filePath -Encoding UTF8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($filePath, $html.ToString(), $utf8NoBom)
     Write-Log "Summary report saved: $filePath" -Level Success
     return $filePath
 }
