@@ -83,6 +83,7 @@ $script:CredentialCache = @{}
 function Write-Log {
     param(
         [Parameter(Mandatory)]
+        [AllowEmptyString()]
         [string]$Message,
         [ValidateSet("Info", "Warning", "Error", "Success")]
         [string]$Level = "Info"
@@ -306,11 +307,10 @@ function Get-CredentialFallback {
     Write-Log "Current credentials failed for $Computer. Prompting for alternate credentials..." -Level Warning
 
     $choice = $null
-    while ($choice -notin @("W", "S", "K")) {
+    while ($choice -notin @("W", "K")) {
         Write-Host ""
         Write-Host "Authentication failed for $Computer. Choose an option:" -ForegroundColor Yellow
         Write-Host "  [W] Enter Windows credentials (domain\user)"
-        Write-Host "  [S] Enter SQL Authentication credentials"
         Write-Host "  [K] Skip this server"
         $choice = (Read-Host "Selection").ToUpper()
     }
@@ -319,20 +319,14 @@ function Get-CredentialFallback {
         return $null
     }
 
-    $cred = Get-Credential -Message "Enter credentials for $Computer"
+    $cred = Get-Credential -Message "Enter Windows credentials for $Computer"
     if (-not $cred) {
         return $null
     }
 
-    $authType = if ($choice -eq "S") { "SQL" } else { "Windows" }
-    $credInfo = @{
-        Credential = $cred
-        AuthType   = $authType
-    }
-
     # Cache for reuse
-    $script:CredentialCache[$Computer] = $credInfo
-    return $credInfo
+    $script:CredentialCache[$Computer] = $cred
+    return $cred
 }
 
 #endregion
@@ -432,8 +426,6 @@ function Invoke-RemoteSQLQuery {
 
         [System.Management.Automation.PSCredential]$WinCredential,
 
-        [hashtable]$SQLAuth,
-
         [string]$Database = "master"
     )
 
@@ -448,7 +440,7 @@ function Invoke-RemoteSQLQuery {
     $serverInstance = if ($InstanceName -eq "DEFAULT") { "localhost" } else { "localhost\$InstanceName" }
 
     $scriptBlock = {
-        param($ServerInstance, $Query, $Database, $SQLUsername, $SQLPassword)
+        param($ServerInstance, $Query, $Database)
 
         $useSqlCmd = $false
 
@@ -475,22 +467,11 @@ function Invoke-RemoteSQLQuery {
                 ErrorAction    = "Stop"
                 QueryTimeout   = 30
             }
-            if ($SQLUsername) {
-                $sqlParams.Username = $SQLUsername
-                $sqlParams.Password = $SQLPassword
-            }
             return Invoke-Sqlcmd @sqlParams
         }
         else {
             # .NET SqlClient fallback
-            $connString = "Server=$ServerInstance;Database=$Database;"
-            if ($SQLUsername) {
-                $connString += "User Id=$SQLUsername;Password=$SQLPassword;"
-            }
-            else {
-                $connString += "Integrated Security=SSPI;"
-            }
-            $connString += "Connection Timeout=10;Command Timeout=30;"
+            $connString = "Server=$ServerInstance;Database=$Database;Integrated Security=SSPI;Connection Timeout=10;Command Timeout=30;"
 
             $conn = New-Object System.Data.SqlClient.SqlConnection($connString)
             $conn.Open()
@@ -507,15 +488,8 @@ function Invoke-RemoteSQLQuery {
         }
     }
 
-    $sqlUser = $null
-    $sqlPass = $null
-    if ($SQLAuth) {
-        $sqlUser = $SQLAuth.Credential.UserName
-        $sqlPass = $SQLAuth.Credential.GetNetworkCredential().Password
-    }
-
     $invokeParams.ScriptBlock = $scriptBlock
-    $invokeParams.ArgumentList = @($serverInstance, $Query, $Database, $sqlUser, $sqlPass)
+    $invokeParams.ArgumentList = @($serverInstance, $Query, $Database)
 
     return Invoke-Command @invokeParams
 }
@@ -524,8 +498,7 @@ function Get-SQLServerConfig {
     param(
         [Parameter(Mandatory)] [string]$Computer,
         [Parameter(Mandatory)] [string]$InstanceName,
-        [System.Management.Automation.PSCredential]$WinCredential,
-        [hashtable]$SQLAuth
+        [System.Management.Automation.PSCredential]$WinCredential
     )
 
     $config = @{}
@@ -533,7 +506,6 @@ function Get-SQLServerConfig {
         Computer     = $Computer
         InstanceName = $InstanceName
         WinCredential = $WinCredential
-        SQLAuth      = $SQLAuth
     }
 
     # Server properties
@@ -615,7 +587,6 @@ function Get-SQLDatabases {
         [Parameter(Mandatory)] [string]$Computer,
         [Parameter(Mandatory)] [string]$InstanceName,
         [System.Management.Automation.PSCredential]$WinCredential,
-        [hashtable]$SQLAuth,
         [switch]$IncludeSystem
     )
 
@@ -623,7 +594,6 @@ function Get-SQLDatabases {
         Computer      = $Computer
         InstanceName  = $InstanceName
         WinCredential = $WinCredential
-        SQLAuth       = $SQLAuth
     }
 
     $whereClause = if ($IncludeSystem) { "" } else { "WHERE d.database_id > 4" }
@@ -667,15 +637,13 @@ function Get-SQLBackupStatus {
     param(
         [Parameter(Mandatory)] [string]$Computer,
         [Parameter(Mandatory)] [string]$InstanceName,
-        [System.Management.Automation.PSCredential]$WinCredential,
-        [hashtable]$SQLAuth
+        [System.Management.Automation.PSCredential]$WinCredential
     )
 
     $queryParams = @{
         Computer      = $Computer
         InstanceName  = $InstanceName
         WinCredential = $WinCredential
-        SQLAuth       = $SQLAuth
     }
 
     try {
@@ -704,8 +672,7 @@ function Get-SQLServerSecurity {
     param(
         [Parameter(Mandatory)] [string]$Computer,
         [Parameter(Mandatory)] [string]$InstanceName,
-        [System.Management.Automation.PSCredential]$WinCredential,
-        [hashtable]$SQLAuth
+        [System.Management.Automation.PSCredential]$WinCredential
     )
 
     $security = @{}
@@ -713,7 +680,6 @@ function Get-SQLServerSecurity {
         Computer      = $Computer
         InstanceName  = $InstanceName
         WinCredential = $WinCredential
-        SQLAuth       = $SQLAuth
     }
 
     # Server logins with roles - try STRING_AGG first, fall back to FOR XML PATH
@@ -789,8 +755,7 @@ function Get-SQLDatabaseSecurity {
         [Parameter(Mandatory)] [string]$Computer,
         [Parameter(Mandatory)] [string]$InstanceName,
         [Parameter(Mandatory)] [string]$DatabaseName,
-        [System.Management.Automation.PSCredential]$WinCredential,
-        [hashtable]$SQLAuth
+        [System.Management.Automation.PSCredential]$WinCredential
     )
 
     $dbSecurity = @{}
@@ -798,7 +763,6 @@ function Get-SQLDatabaseSecurity {
         Computer      = $Computer
         InstanceName  = $InstanceName
         WinCredential = $WinCredential
-        SQLAuth       = $SQLAuth
         Database      = $DatabaseName
     }
 
@@ -884,15 +848,13 @@ function Get-SQLAgentJobs {
     param(
         [Parameter(Mandatory)] [string]$Computer,
         [Parameter(Mandatory)] [string]$InstanceName,
-        [System.Management.Automation.PSCredential]$WinCredential,
-        [hashtable]$SQLAuth
+        [System.Management.Automation.PSCredential]$WinCredential
     )
 
     $queryParams = @{
         Computer      = $Computer
         InstanceName  = $InstanceName
         WinCredential = $WinCredential
-        SQLAuth       = $SQLAuth
         Database      = "msdb"
     }
 
@@ -1693,7 +1655,6 @@ function Invoke-DBExplorer {
         Write-Progress -Activity "SQL Inventory" -Status "Processing $sqlHost ($serverIndex of $($sqlHosts.Count))" -PercentComplete (($serverIndex / $sqlHosts.Count) * 100)
 
         $winCred = $null
-        $sqlAuth = $null
         $inventoryData = @{
             Computer         = $sqlHost
             Config           = $null
@@ -1710,34 +1671,19 @@ function Invoke-DBExplorer {
         $winrmOk = Test-WinRMAccess -Computer $sqlHost
         if (-not $winrmOk) {
             Write-Log "  WinRM access failed with current credentials for $sqlHost" -Level Warning
-            $credInfo = Get-CredentialFallback -Computer $sqlHost
+            $winCred = Get-CredentialFallback -Computer $sqlHost
 
-            if (-not $credInfo) {
+            if (-not $winCred) {
                 Write-Log "  Skipping $sqlHost (no credentials provided)" -Level Warning
                 [void]$failedServers.Add(@{ Computer = $sqlHost; Reason = "WinRM access denied / skipped by user" })
                 continue
             }
 
-            if ($credInfo.AuthType -eq "Windows") {
-                $winCred = $credInfo.Credential
-                $winrmOk = Test-WinRMAccess -Computer $sqlHost -Credential $winCred
-                if (-not $winrmOk) {
-                    Write-Log "  WinRM access still failed with provided Windows credentials" -Level Error
-                    [void]$failedServers.Add(@{ Computer = $sqlHost; Reason = "WinRM access denied with alternate credentials" })
-                    continue
-                }
-            }
-            elseif ($credInfo.AuthType -eq "SQL") {
-                $sqlAuth = $credInfo
-                # For SQL auth, we still need WinRM to work with current user for remote execution
-                # If WinRM doesn't work at all, we can't run queries remotely
-                Write-Log "  SQL Auth selected but WinRM is required for remote execution. Attempting with current user WinRM..." -Level Warning
-                $winrmOk = Test-WinRMAccess -Computer $sqlHost
-                if (-not $winrmOk) {
-                    Write-Log "  Cannot access $sqlHost via WinRM even for SQL Auth relay. Skipping." -Level Error
-                    [void]$failedServers.Add(@{ Computer = $sqlHost; Reason = "WinRM unavailable - cannot relay SQL Auth" })
-                    continue
-                }
+            $winrmOk = Test-WinRMAccess -Computer $sqlHost -Credential $winCred
+            if (-not $winrmOk) {
+                Write-Log "  WinRM access still failed with provided Windows credentials" -Level Error
+                [void]$failedServers.Add(@{ Computer = $sqlHost; Reason = "WinRM access denied with alternate credentials" })
+                continue
             }
         }
 
@@ -1761,7 +1707,6 @@ function Invoke-DBExplorer {
                 Computer      = $sqlHost
                 InstanceName  = $instName
                 WinCredential = $winCred
-                SQLAuth       = $sqlAuth
             }
 
             # Server config
