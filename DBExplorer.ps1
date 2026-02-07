@@ -120,7 +120,10 @@ function Write-Log {
 
 function Get-ADComputerTargets {
     param(
-        [string]$SearchBase
+        [string]$SearchBase,
+
+        [ValidateSet("Servers", "Workstations", "Both")]
+        [string]$TargetScope = "Servers"
     )
 
     Write-Log "Discovering computers from Active Directory..."
@@ -135,7 +138,7 @@ function Get-ADComputerTargets {
 
     $adParams = @{
         Filter     = {Enabled -eq $true}
-        Properties = @("DNSHostName", "OperatingSystem", "IPv4Address")
+        Properties = @("DNSHostName", "OperatingSystem", "OperatingSystemVersion", "IPv4Address")
     }
 
     if ($SearchBase) {
@@ -144,11 +147,26 @@ function Get-ADComputerTargets {
     }
 
     try {
-        $computers = @(Get-ADComputer @adParams | Where-Object {
-            $_.OperatingSystem -like "*Windows Server*" -or $_.OperatingSystem -like "*Windows*"
-        } | Select-Object Name, DNSHostName, OperatingSystem, IPv4Address)
+        $allComputers = @(Get-ADComputer @adParams | Where-Object { $_.OperatingSystem })
 
-        Write-Log "Found $($computers.Count) enabled Windows computers in AD" -Level Success
+        # Apply scope filter
+        $computers = switch ($TargetScope) {
+            "Servers" {
+                @($allComputers | Where-Object { $_.OperatingSystem -like "*Windows Server*" })
+            }
+            "Workstations" {
+                @($allComputers | Where-Object {
+                    $_.OperatingSystem -like "*Windows*" -and $_.OperatingSystem -notlike "*Windows Server*"
+                })
+            }
+            "Both" {
+                @($allComputers | Where-Object { $_.OperatingSystem -like "*Windows*" })
+            }
+        }
+
+        $computers = @($computers | Select-Object Name, DNSHostName, OperatingSystem, OperatingSystemVersion, IPv4Address)
+
+        Write-Log "Found $($computers.Count) enabled Windows computers in AD (scope: $TargetScope)" -Level Success
         return $computers
     }
     catch {
@@ -2434,6 +2452,10 @@ function New-ServerReport {
                 <div class="header-info-value">$([System.Web.HttpUtility]::HtmlEncode($edition))</div>
             </div>
             <div class="header-info-item">
+                <div class="header-info-label">Host OS</div>
+                <div class="header-info-value">$([System.Web.HttpUtility]::HtmlEncode($(if ($InventoryData.OperatingSystem -and $InventoryData.OperatingSystem -ne 'Unknown') { $InventoryData.OperatingSystem } else { 'N/A' })))</div>
+            </div>
+            <div class="header-info-item">
                 <div class="header-info-label">Clustered</div>
                 <div class="header-info-value">$clustered</div>
             </div>
@@ -2665,7 +2687,8 @@ function New-SummaryReport {
 
         [int]$TotalScanned,
         [int]$SQLHostsFound,
-        [array]$FailedServers
+        [array]$FailedServers,
+        [array]$LegacyHosts
     )
 
     Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
@@ -2734,6 +2757,10 @@ function New-SummaryReport {
                 <div class="metric-label">Failed / Skipped</div>
             </div>
             <div class="metric-card">
+                <div class="metric-value" style="color: $(if ($LegacyHosts -and $LegacyHosts.Count -gt 0) { '#dc3545' } else { '#28a745' })">$(if ($LegacyHosts) { $LegacyHosts.Count } else { 0 })</div>
+                <div class="metric-label">Legacy OS</div>
+            </div>
+            <div class="metric-card">
                 <div class="metric-value" style="color: $summarySecColor">$totalSecFindings</div>
                 <div class="metric-label">Security Findings</div>
             </div>
@@ -2773,8 +2800,11 @@ function New-SummaryReport {
             @($srv.KillChainAssessment.AttackPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
         } else { 0 }
 
+        $srvHostOS = if ($srv.OperatingSystem -and $srv.OperatingSystem -ne "Unknown") { $srv.OperatingSystem } else { "N/A" }
+
         [PSCustomObject]@{
             Server           = $srv.Computer
+            HostOS           = $srvHostOS
             Version          = $srvVersion
             Edition          = $srvEdition
             Databases        = $dbCount
@@ -2795,7 +2825,7 @@ function New-SummaryReport {
             <div id="sec-servers" class="section-content active">
                 <table>
                     <thead><tr>
-                        <th>Server</th><th>Version</th><th>Edition</th>
+                        <th>Server</th><th>Host OS</th><th>Version</th><th>Edition</th>
                         <th>Databases</th><th>Size (GB)</th><th>Backup Health</th><th>Security</th><th>Kill Chains</th><th>Report</th>
                     </tr></thead>
                     <tbody>
@@ -2821,6 +2851,7 @@ function New-SummaryReport {
         [void]$html.AppendLine(@"
                     <tr>
                         <td><strong>$([System.Web.HttpUtility]::HtmlEncode($row.Server))</strong></td>
+                        <td>$([System.Web.HttpUtility]::HtmlEncode($row.HostOS))</td>
                         <td>$([System.Web.HttpUtility]::HtmlEncode($row.Version))</td>
                         <td>$([System.Web.HttpUtility]::HtmlEncode($row.Edition))</td>
                         <td>$($row.Databases)</td>
@@ -2853,6 +2884,28 @@ function New-SummaryReport {
         [void]$html.AppendLine("</tbody></table></div></div>")
     }
 
+    # Legacy OS section
+    if ($LegacyHosts -and $LegacyHosts.Count -gt 0) {
+        [void]$html.AppendLine(@"
+        <div class="section">
+            <div class="section-header active" style="border-left-color: #dc3545;" onclick="toggleSection('sec-legacy')">
+                <span style="color: #dc3545;">&#9888; SQL Server on Legacy OS ($($LegacyHosts.Count))</span> <span class="toggle">&#9654;</span>
+            </div>
+            <div id="sec-legacy" class="section-content active">
+                <p style="color: #856404; background: #fff3cd; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
+                    The following hosts have SQL Server ports open but are running operating systems that do not support WinRM remoting.
+                    These servers could not be inventoried and represent a significant security risk as legacy operating systems no longer receive security updates.
+                </p>
+                <table>
+                    <thead><tr><th>Server</th><th>Operating System</th><th>OS Version</th><th>Reason</th></tr></thead>
+                    <tbody>
+"@)
+        foreach ($lh in $LegacyHosts) {
+            [void]$html.AppendLine("<tr><td><strong>$([System.Web.HttpUtility]::HtmlEncode($lh.Computer))</strong></td><td class='status-critical'>$([System.Web.HttpUtility]::HtmlEncode($lh.OperatingSystem))</td><td>$([System.Web.HttpUtility]::HtmlEncode($lh.OSVersion))</td><td>$([System.Web.HttpUtility]::HtmlEncode($lh.Reason))</td></tr>")
+        }
+        [void]$html.AppendLine("</tbody></table></div></div>")
+    }
+
     # Footer
     [void]$html.AppendLine(@"
         <div class="footer">
@@ -2868,6 +2921,313 @@ function New-SummaryReport {
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     [System.IO.File]::WriteAllText($filePath, $html.ToString(), $utf8NoBom)
     Write-Log "Summary report saved: $filePath" -Level Success
+    return $filePath
+}
+
+#endregion
+
+#region ==================== SQL MAP REPORT ====================
+
+function New-SQLMapReport {
+    param(
+        [Parameter(Mandatory)]
+        [array]$ServerResults,
+
+        [Parameter(Mandatory)]
+        [string]$OutputPath,
+
+        [array]$LegacyHosts
+    )
+
+    Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
+
+    $scanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $html = [System.Text.StringBuilder]::new()
+    [void]$html.AppendLine((Get-HtmlHeader))
+    [void]$html.AppendLine("<title>DBExplorer - SQL Server Map</title>")
+
+    # Additional CSS for folder-tree view
+    [void]$html.AppendLine(@"
+<style>
+    .tree { list-style: none; padding-left: 0; }
+    .tree ul { list-style: none; padding-left: 0; margin: 0; }
+    .tree-node { margin: 2px 0; }
+    .tree-toggle {
+        cursor: pointer;
+        padding: 8px 14px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 14px;
+        user-select: none;
+        transition: background 0.15s;
+    }
+    .tree-toggle:hover { background: #e9ecef; }
+    .tree-icon {
+        font-size: 16px;
+        width: 22px;
+        text-align: center;
+        flex-shrink: 0;
+    }
+    .tree-label { font-weight: 600; color: #1a237e; }
+    .tree-meta {
+        font-size: 12px;
+        color: #6c757d;
+        margin-left: auto;
+        white-space: nowrap;
+    }
+    .tree-children {
+        display: none;
+        padding-left: 24px;
+        border-left: 2px solid #e9ecef;
+        margin-left: 18px;
+    }
+    .tree-children.open { display: block; }
+    .tree-leaf {
+        padding: 4px 14px 4px 46px;
+        font-size: 13px;
+        color: #495057;
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+    }
+    .tree-leaf .leaf-icon { color: #6c757d; font-size: 11px; width: 16px; text-align: center; flex-shrink: 0; }
+    .tree-leaf .leaf-key { color: #6c757d; min-width: 110px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; }
+    .tree-leaf .leaf-val { color: #333; }
+
+    /* Server-level node styling */
+    .node-server > .tree-toggle { background: #f8f9fa; border: 1px solid #e9ecef; font-size: 15px; }
+    .node-server > .tree-toggle:hover { background: #e3e7eb; }
+    .node-port > .tree-toggle { font-size: 13px; }
+    .node-db > .tree-toggle { font-size: 13px; }
+    .node-db > .tree-toggle .tree-label { color: #495057; font-weight: 500; }
+
+    /* Tag badges */
+    .tag {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+    }
+    .tag-online { background: #d4edda; color: #155724; }
+    .tag-offline { background: #f8d7da; color: #721c24; }
+    .tag-port { background: #d1ecf1; color: #0c5460; }
+    .tag-legacy { background: #f8d7da; color: #721c24; }
+    .tag-size { background: #e2e3e5; color: #383d41; }
+
+    /* Expand/Collapse bar */
+    .tree-controls {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 15px;
+        justify-content: flex-end;
+    }
+    .tree-controls a {
+        font-size: 13px;
+        cursor: pointer;
+        color: #1a237e;
+        text-decoration: none;
+    }
+    .tree-controls a:hover { text-decoration: underline; }
+</style>
+"@)
+
+    [void]$html.AppendLine("</head>")
+
+    # JavaScript for tree toggle
+    [void]$html.AppendLine(@"
+<body>
+<div class="container">
+    <div class="report-header">
+        <h1>SQL Server Map</h1>
+        <div class="subtitle">Infrastructure Discovery View &mdash; Generated by DBExplorer</div>
+        <div class="header-info">
+            <div class="header-info-item">
+                <div class="header-info-label">Servers</div>
+                <div class="header-info-value">$($ServerResults.Count)</div>
+            </div>
+            <div class="header-info-item">
+                <div class="header-info-label">Total Databases</div>
+                <div class="header-info-value">$(($ServerResults | ForEach-Object { if ($_.Databases) { @($_.Databases).Count } else { 0 } } | Measure-Object -Sum).Sum)</div>
+            </div>
+            <div class="header-info-item">
+                <div class="header-info-label">Legacy OS Hosts</div>
+                <div class="header-info-value" style="color: $(if ($LegacyHosts -and $LegacyHosts.Count -gt 0) { '#dc3545' } else { '#28a745' })">$(if ($LegacyHosts) { $LegacyHosts.Count } else { 0 })</div>
+            </div>
+            <div class="header-info-item">
+                <div class="header-info-label">Scan Date</div>
+                <div class="header-info-value">$scanDate</div>
+            </div>
+        </div>
+    </div>
+    <div class="content">
+        <div class="tree-controls">
+            <a onclick="document.querySelectorAll('.tree-children').forEach(function(el){el.classList.add('open')})">Expand All</a>
+            <span style="color:#ccc">|</span>
+            <a onclick="document.querySelectorAll('.tree-children').forEach(function(el){el.classList.remove('open')})">Collapse All</a>
+        </div>
+
+        <ul class="tree">
+"@)
+
+    # Script for toggling tree nodes
+    $toggleScript = "this.parentElement.querySelector('.tree-children').classList.toggle('open'); var ico=this.querySelector('.tree-icon'); ico.innerHTML = ico.innerHTML.indexOf('9658')>-1 ? '&#9660;' : '&#9658;';"
+
+    # ---- Inventoried servers ----
+    $srvIdx = 0
+    foreach ($srv in $ServerResults) {
+        $srvIdx++
+        $srvComputer = [System.Web.HttpUtility]::HtmlEncode($srv.Computer)
+        $srvIP       = [System.Web.HttpUtility]::HtmlEncode($(if ($srv.IPv4Address -and $srv.IPv4Address -ne "N/A") { $srv.IPv4Address } else { "IP Unknown" }))
+        $srvOS       = [System.Web.HttpUtility]::HtmlEncode($(if ($srv.OperatingSystem -and $srv.OperatingSystem -ne "Unknown") { $srv.OperatingSystem } else { "OS Unknown" }))
+        $srvPorts    = if ($srv.OpenPorts) { ($srv.OpenPorts | Sort-Object) -join ", " } else { "N/A" }
+        $dbCount     = if ($srv.Databases) { @($srv.Databases).Count } else { 0 }
+        $totalSizeMB = if ($srv.Databases) { ($srv.Databases | Measure-Object -Property TotalSizeMB -Sum).Sum } else { 0 }
+        $totalSizeDisplay = if ($totalSizeMB -ge 1024) { "$([math]::Round($totalSizeMB / 1024, 2)) GB" } else { "$([math]::Round($totalSizeMB, 1)) MB" }
+
+        # Get SQL version from config
+        $srvProps = if ($srv.Config) { $srv.Config.ServerProperties } else { $null }
+        $sqlVersion = if ($srvProps) { "$($srvProps.ProductVersion) $($srvProps.Edition)" } else { "Unknown" }
+        $sqlVersion = [System.Web.HttpUtility]::HtmlEncode($sqlVersion)
+
+        # Server node (collapsed by default)
+        [void]$html.AppendLine(@"
+            <li class="tree-node node-server">
+                <div class="tree-toggle" onclick="$toggleScript">
+                    <span class="tree-icon">&#9658;</span>
+                    <span class="tree-label">&#128429; $srvComputer</span>
+                    <span class="tree-meta">$dbCount DB(s) &bull; $totalSizeDisplay &bull; Ports: $srvPorts</span>
+                </div>
+                <div class="tree-children">
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">IP Address</span><span class="leaf-val">$srvIP</span></div>
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Host OS</span><span class="leaf-val">$srvOS</span></div>
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">SQL Version</span><span class="leaf-val">$sqlVersion</span></div>
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Open Ports</span><span class="leaf-val">$(($srv.OpenPorts | Sort-Object | ForEach-Object { "<span class='tag tag-port'>$_</span>" }) -join ' ')</span></div>
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Total Size</span><span class="leaf-val"><span class="tag tag-size">$totalSizeDisplay</span></span></div>
+"@)
+
+        # Report link
+        if ($srv.ReportFile) {
+            $reportFileName = [System.Web.HttpUtility]::HtmlEncode((Split-Path $srv.ReportFile -Leaf))
+            [void]$html.AppendLine("                    <div class='tree-leaf'><span class='leaf-icon'>&#9656;</span><span class='leaf-key'>Full Report</span><span class='leaf-val'><a href='$reportFileName'>View Detail Report</a></span></div>")
+        }
+
+        # ---- Databases sub-tree ----
+        if ($srv.Databases -and @($srv.Databases).Count -gt 0) {
+            [void]$html.AppendLine(@"
+                    <ul>
+                        <li class="tree-node node-port">
+                            <div class="tree-toggle" onclick="$toggleScript">
+                                <span class="tree-icon">&#9658;</span>
+                                <span class="tree-label">&#128451; Databases ($dbCount)</span>
+                            </div>
+                            <div class="tree-children">
+"@)
+
+            foreach ($db in ($srv.Databases | Sort-Object -Property DatabaseName)) {
+                $dbName      = [System.Web.HttpUtility]::HtmlEncode($db.DatabaseName)
+                $dbState     = $db.State
+                $stateTag    = if ($dbState -eq "ONLINE") { "<span class='tag tag-online'>ONLINE</span>" } else { "<span class='tag tag-offline'>$([System.Web.HttpUtility]::HtmlEncode($dbState))</span>" }
+                $dbSizeMB    = $db.TotalSizeMB
+                $dbSizeDisp  = if ($dbSizeMB -ge 1024) { "$([math]::Round($dbSizeMB / 1024, 2)) GB" } else { "$([math]::Round($dbSizeMB, 1)) MB" }
+                $dataSizeMB  = $db.DataSizeMB
+                $logSizeMB   = $db.LogSizeMB
+                $dataSizeDisp = if ($dataSizeMB -ge 1024) { "$([math]::Round($dataSizeMB / 1024, 2)) GB" } else { "$([math]::Round($dataSizeMB, 1)) MB" }
+                $logSizeDisp  = if ($logSizeMB -ge 1024) { "$([math]::Round($logSizeMB / 1024, 2)) GB" } else { "$([math]::Round($logSizeMB, 1)) MB" }
+                $recovery    = [System.Web.HttpUtility]::HtmlEncode($db.RecoveryModel)
+                $compat      = $db.CompatibilityLevel
+                $collation   = [System.Web.HttpUtility]::HtmlEncode($(if ($db.Collation) { $db.Collation } else { "N/A" }))
+                $readOnly    = $db.IsReadOnly
+                $autoClose   = $db.AutoClose
+                $autoShrink  = $db.AutoShrink
+                $pageVerify  = [System.Web.HttpUtility]::HtmlEncode($(if ($db.PageVerify) { $db.PageVerify } else { "N/A" }))
+                $fileCount   = $db.FileCount
+                $createDate  = if ($db.CreateDate -is [datetime]) { $db.CreateDate.ToString("yyyy-MM-dd") } else { $db.CreateDate }
+
+                [void]$html.AppendLine(@"
+                                <ul>
+                                    <li class="tree-node node-db">
+                                        <div class="tree-toggle" onclick="$toggleScript">
+                                            <span class="tree-icon">&#9658;</span>
+                                            <span class="tree-label">&#128462; $dbName</span>
+                                            <span class="tree-meta">$stateTag &nbsp; <span class="tag tag-size">$dbSizeDisp</span> &nbsp; $recovery</span>
+                                        </div>
+                                        <div class="tree-children">
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">State</span><span class="leaf-val">$stateTag</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Recovery Model</span><span class="leaf-val">$recovery</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Compatibility</span><span class="leaf-val">$compat</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Collation</span><span class="leaf-val">$collation</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Data Size</span><span class="leaf-val">$dataSizeDisp</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Log Size</span><span class="leaf-val">$logSizeDisp</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">File Count</span><span class="leaf-val">$fileCount</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Page Verify</span><span class="leaf-val">$pageVerify</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Read Only</span><span class="leaf-val">$readOnly</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Auto Close</span><span class="leaf-val">$autoClose</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Auto Shrink</span><span class="leaf-val">$autoShrink</span></div>
+                                            <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Created</span><span class="leaf-val">$createDate</span></div>
+                                        </div>
+                                    </li>
+                                </ul>
+"@)
+            }
+
+            [void]$html.AppendLine("                            </div>")
+            [void]$html.AppendLine("                        </li>")
+            [void]$html.AppendLine("                    </ul>")
+        }
+        else {
+            [void]$html.AppendLine("                    <div class='tree-leaf'><span class='leaf-icon'>&#9656;</span><span class='leaf-key'>Databases</span><span class='leaf-val' style='color:#6c757d;font-style:italic'>No databases retrieved (insufficient permissions)</span></div>")
+        }
+
+        [void]$html.AppendLine("                </div>")
+        [void]$html.AppendLine("            </li>")
+    }
+
+    # ---- Legacy OS hosts (cannot be inventoried) ----
+    if ($LegacyHosts -and $LegacyHosts.Count -gt 0) {
+        foreach ($lh in $LegacyHosts) {
+            $lhComputer = [System.Web.HttpUtility]::HtmlEncode($lh.Computer)
+            $lhIP       = [System.Web.HttpUtility]::HtmlEncode($(if ($lh.IPv4Address -and $lh.IPv4Address -ne "N/A") { $lh.IPv4Address } else { "IP Unknown" }))
+            $lhOS       = [System.Web.HttpUtility]::HtmlEncode($lh.OperatingSystem)
+            $lhPorts    = if ($lh.OpenPorts) { ($lh.OpenPorts | Sort-Object) -join ", " } else { "N/A" }
+
+            [void]$html.AppendLine(@"
+            <li class="tree-node node-server">
+                <div class="tree-toggle" onclick="$toggleScript" style="border-left: 3px solid #dc3545;">
+                    <span class="tree-icon">&#9658;</span>
+                    <span class="tree-label">&#128429; $lhComputer</span>
+                    <span class="tree-meta"><span class="tag tag-legacy">LEGACY OS</span> &bull; Ports: $lhPorts</span>
+                </div>
+                <div class="tree-children">
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">IP Address</span><span class="leaf-val">$lhIP</span></div>
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Host OS</span><span class="leaf-val" style="color:#dc3545;font-weight:600">$lhOS</span></div>
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Open Ports</span><span class="leaf-val">$(($lh.OpenPorts | Sort-Object | ForEach-Object { "<span class='tag tag-port'>$_</span>" }) -join ' ')</span></div>
+                    <div class="tree-leaf"><span class="leaf-icon">&#9656;</span><span class="leaf-key">Status</span><span class="leaf-val" style="color:#dc3545">Cannot inventory &mdash; $([System.Web.HttpUtility]::HtmlEncode($lh.Reason))</span></div>
+                </div>
+            </li>
+"@)
+        }
+    }
+
+    # Close tree and page
+    [void]$html.AppendLine(@"
+        </ul>
+        <div class="footer">
+            SQL Server Map generated by DBExplorer.ps1 on $scanDate
+        </div>
+    </div>
+</div>
+</body>
+</html>
+"@)
+
+    $filePath = Join-Path $OutputPath "SQL_Map.html"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($filePath, $html.ToString(), $utf8NoBom)
+    Write-Log "  SQL Map report saved: $filePath" -Level Success
     return $filePath
 }
 
@@ -2937,20 +3297,48 @@ function Invoke-DBExplorer {
     }
     Write-Host ""
 
+    # ---- Target Scope Selection (AD discovery only) ----
+    $targetScope = "Servers"
+    if (-not $ComputerName) {
+        Write-Host "  Target Scope" -ForegroundColor Cyan
+        Write-Host "  ============" -ForegroundColor DarkCyan
+        Write-Host ""
+
+        $scopeChoice = $null
+        while ($scopeChoice -notin @("S", "W", "B")) {
+            Write-Host "  What systems should be scanned for SQL Server?" -ForegroundColor Yellow
+            Write-Host "    [S] Servers only (recommended)"
+            Write-Host "    [W] Workstations only"
+            Write-Host "    [B] Both servers and workstations"
+            $scopeChoice = (Read-Host "  Selection").Trim().ToUpper()
+        }
+
+        $targetScope = switch ($scopeChoice) {
+            "S" { "Servers" }
+            "W" { "Workstations" }
+            "B" { "Both" }
+        }
+        Write-Log "Target scope: $targetScope"
+        Write-Host ""
+    }
+
     # ---- Phase 1: Computer Discovery ----
     $computers = @()
     if ($ComputerName) {
         $computerList = $ComputerName -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ }
         $computers = $computerList | ForEach-Object {
             [PSCustomObject]@{
-                Name        = $_
-                DNSHostName = $_
+                Name                   = $_
+                DNSHostName            = $_
+                OperatingSystem        = "Unknown"
+                OperatingSystemVersion = "Unknown"
+                IPv4Address            = "N/A"
             }
         }
         Write-Log "Using provided computer list: $($computers.Count) servers"
     }
     else {
-        $computers = Get-ADComputerTargets -SearchBase $SearchBase
+        $computers = Get-ADComputerTargets -SearchBase $SearchBase -TargetScope $targetScope
         if (-not $computers -or $computers.Count -eq 0) {
             Write-Log "No computers found. Exiting." -Level Error
             return
@@ -2959,34 +3347,140 @@ function Invoke-DBExplorer {
 
     $totalScanned = $computers.Count
 
+    # Build a lookup table to preserve OS & IP info through port scanning
+    $osLookup = @{}
+    foreach ($comp in $computers) {
+        $hostKey = if ($comp.DNSHostName) { $comp.DNSHostName } else { $comp.Name }
+        $osLookup[$hostKey.ToLower()] = @{
+            OperatingSystem        = if ($comp.OperatingSystem) { $comp.OperatingSystem } else { "Unknown" }
+            OperatingSystemVersion = if ($comp.OperatingSystemVersion) { $comp.OperatingSystemVersion } else { "Unknown" }
+            IPv4Address            = if ($comp.IPv4Address) { $comp.IPv4Address } else { "N/A" }
+        }
+    }
+
     # ---- Phase 2: Port Scanning ----
     $computerNames = $computers | ForEach-Object { if ($_.DNSHostName) { $_.DNSHostName } else { $_.Name } }
     $portResults = Invoke-ParallelPortScan -Computers $computerNames -Ports $Ports -Timeout $PortTimeout -MaxThreads $MaxThreads
 
-    $sqlHosts = @($portResults | Where-Object { $_.IsOpen } | Select-Object -ExpandProperty Computer -Unique)
+    $sqlHostNames = @($portResults | Where-Object { $_.IsOpen } | Select-Object -ExpandProperty Computer -Unique)
 
-    if ($sqlHosts.Count -eq 0) {
+    if ($sqlHostNames.Count -eq 0) {
         Write-Log "No SQL Server ports found on any scanned computers." -Level Warning
         Write-Log "Try adjusting the port list or scanning specific servers with -ComputerName"
         return
     }
 
-    Write-Log "SQL Server ports detected on $($sqlHosts.Count) hosts. Beginning inventory..." -Level Info
+    # Build per-host port lookup from scan results
+    $portLookup = @{}
+    foreach ($pr in $portResults) {
+        if ($pr.IsOpen) {
+            $pKey = $pr.Computer.ToLower()
+            if (-not $portLookup.ContainsKey($pKey)) { $portLookup[$pKey] = [System.Collections.ArrayList]::new() }
+            [void]$portLookup[$pKey].Add($pr.Port)
+        }
+    }
+
+    # Enrich SQL hosts with OS info and classify WinRM support
+    # WinRM requires Windows Server 2008 R2+ / Windows 7+ (NT 6.1+)
+    # Mapping: Server 2003 = 5.2, Server 2008 = 6.0, Server 2008 R2 = 6.1,
+    #          Server 2012 = 6.2, Server 2012 R2 = 6.3, Server 2016+ = 10.0
+    $sqlHosts = [System.Collections.ArrayList]::new()
+    $legacyHosts = [System.Collections.ArrayList]::new()
+
+    foreach ($hostName in $sqlHostNames) {
+        $osInfo = $osLookup[$hostName.ToLower()]
+        $osName = if ($osInfo) { $osInfo.OperatingSystem } else { "Unknown" }
+        $osVer  = if ($osInfo) { $osInfo.OperatingSystemVersion } else { "Unknown" }
+        $ipAddr = if ($osInfo) { $osInfo.IPv4Address } else { "N/A" }
+        $openPorts = if ($portLookup.ContainsKey($hostName.ToLower())) { @($portLookup[$hostName.ToLower()]) } else { @() }
+
+        # Parse major.minor version for WinRM compatibility check
+        $isLegacy = $false
+        $legacyReason = ""
+        if ($osVer -and $osVer -ne "Unknown") {
+            $verParts = $osVer -split '\.'
+            $majorVer = 0
+            $minorVer = 0
+            if ($verParts.Count -ge 1) { [int]::TryParse($verParts[0], [ref]$majorVer) | Out-Null }
+            if ($verParts.Count -ge 2) { [int]::TryParse($verParts[1], [ref]$minorVer) | Out-Null }
+
+            # NT version < 6.1 does not support modern WinRM (Server 2003/2008 non-R2)
+            if ($majorVer -gt 0 -and ($majorVer -lt 6 -or ($majorVer -eq 6 -and $minorVer -lt 1))) {
+                $isLegacy = $true
+                $legacyReason = "OS version $osVer ($osName) does not support WinRM remoting"
+            }
+        }
+        elseif ($osName -ne "Unknown") {
+            # Fallback: check OS name string for known legacy versions
+            if ($osName -match "200[03]|NT 4|XP") {
+                $isLegacy = $true
+                $legacyReason = "$osName does not support WinRM remoting"
+            }
+        }
+
+        if ($isLegacy) {
+            Write-Log "  WARNING: SQL detected on legacy OS: $hostName ($osName / $osVer)" -Level Warning
+            Write-Log "    Skipping inventory - WinRM not supported on this OS" -Level Warning
+            [void]$legacyHosts.Add(@{
+                Computer        = $hostName
+                OperatingSystem = $osName
+                OSVersion       = $osVer
+                IPv4Address     = $ipAddr
+                OpenPorts       = $openPorts
+                Reason          = $legacyReason
+            })
+        }
+        else {
+            [void]$sqlHosts.Add(@{
+                Computer        = $hostName
+                OperatingSystem = $osName
+                OSVersion       = $osVer
+                IPv4Address     = $ipAddr
+                OpenPorts       = $openPorts
+            })
+        }
+    }
+
+    # Report legacy hosts
+    if ($legacyHosts.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  ! SQL Server detected on $($legacyHosts.Count) legacy system(s) (WinRM not supported):" -ForegroundColor Red
+        foreach ($lh in $legacyHosts) {
+            Write-Host "    - $($lh.Computer): $($lh.OperatingSystem)" -ForegroundColor Yellow
+        }
+        Write-Host "    These hosts will be flagged in the report but cannot be inventoried." -ForegroundColor DarkYellow
+        Write-Host ""
+    }
+
+    if ($sqlHosts.Count -eq 0) {
+        Write-Log "No WinRM-compatible SQL Server hosts found to inventory." -Level Warning
+        if ($legacyHosts.Count -gt 0) {
+            Write-Log "All $($legacyHosts.Count) SQL host(s) are running unsupported legacy operating systems."
+        }
+        return
+    }
+
+    Write-Log "SQL Server ports detected on $($sqlHosts.Count) compatible hosts. Beginning inventory..." -Level Info
 
     # ---- Phase 3: Inventory ----
     $serverResults = [System.Collections.ArrayList]::new()
     $failedServers = [System.Collections.ArrayList]::new()
     $serverIndex = 0
 
-    foreach ($sqlHost in $sqlHosts) {
+    foreach ($sqlHostInfo in $sqlHosts) {
+        $sqlHost = $sqlHostInfo.Computer
         $serverIndex++
         Write-Log ""
-        Write-Log "=== [$serverIndex/$($sqlHosts.Count)] Processing: $sqlHost ==="
+        Write-Log "=== [$serverIndex/$($sqlHosts.Count)] Processing: $sqlHost ($($sqlHostInfo.OperatingSystem)) ==="
         Write-Progress -Activity "SQL Inventory" -Status "Processing $sqlHost ($serverIndex of $($sqlHosts.Count))" -PercentComplete (($serverIndex / $sqlHosts.Count) * 100)
 
         $winCred = $script:GlobalCredential
         $inventoryData = @{
             Computer         = $sqlHost
+            OperatingSystem  = $sqlHostInfo.OperatingSystem
+            OSVersion        = $sqlHostInfo.OSVersion
+            IPv4Address      = $sqlHostInfo.IPv4Address
+            OpenPorts        = $sqlHostInfo.OpenPorts
             Config           = $null
             Databases        = $null
             Backups          = $null
@@ -3178,16 +3672,26 @@ function Invoke-DBExplorer {
 
     Write-Progress -Activity "SQL Inventory" -Completed
 
-    # ---- Phase 4: Summary Report ----
+    # ---- Phase 4: Summary & Map Reports ----
     Write-Log ""
     Write-Log "=== Generating Summary Report ==="
 
     try {
         $summaryPath = New-SummaryReport -ServerResults $serverResults -OutputPath $reportDir `
-            -TotalScanned $totalScanned -SQLHostsFound $sqlHosts.Count -FailedServers $failedServers
+            -TotalScanned $totalScanned -SQLHostsFound ($sqlHosts.Count + $legacyHosts.Count) `
+            -FailedServers $failedServers -LegacyHosts $legacyHosts
     }
     catch {
         Write-Log "Failed to generate summary report: $_" -Level Error
+    }
+
+    Write-Log "=== Generating SQL Map Report ==="
+
+    try {
+        $mapPath = New-SQLMapReport -ServerResults $serverResults -OutputPath $reportDir -LegacyHosts $legacyHosts
+    }
+    catch {
+        Write-Log "Failed to generate SQL Map report: $_" -Level Error
     }
 
     # ---- Phase 5: Summary ----
@@ -3196,12 +3700,15 @@ function Invoke-DBExplorer {
     Write-Log "============================================"
     Write-Log "  DBExplorer Complete"
     Write-Log "============================================"
-    Write-Log "  Computers scanned:     $totalScanned"
-    Write-Log "  SQL hosts found:       $($sqlHosts.Count)"
+    Write-Log "  Computers scanned:       $totalScanned"
+    Write-Log "  SQL hosts found:         $($sqlHosts.Count + $legacyHosts.Count)"
     Write-Log "  Successfully inventoried: $($serverResults.Count)"
-    Write-Log "  Failed/skipped:        $($failedServers.Count)"
-    Write-Log "  Total elapsed time:    $($elapsed.ToString('hh\:mm\:ss'))"
-    Write-Log "  Reports saved to:      $reportDir"
+    Write-Log "  Failed/skipped:          $($failedServers.Count)"
+    if ($legacyHosts.Count -gt 0) {
+        Write-Log "  Legacy OS (skipped):     $($legacyHosts.Count)" -Level Warning
+    }
+    Write-Log "  Total elapsed time:      $($elapsed.ToString('hh\:mm\:ss'))"
+    Write-Log "  Reports saved to:        $reportDir"
     Write-Log "============================================"
 
     # Open summary report
