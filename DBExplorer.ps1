@@ -132,7 +132,7 @@ function Get-ADComputerTargets {
     }
 
     $adParams = @{
-        Filter     = "Enabled -eq 'True'"
+        Filter     = {Enabled -eq $true}
         Properties = @("DNSHostName", "OperatingSystem", "IPv4Address")
     }
 
@@ -142,9 +142,9 @@ function Get-ADComputerTargets {
     }
 
     try {
-        $computers = Get-ADComputer @adParams | Where-Object {
+        $computers = @(Get-ADComputer @adParams | Where-Object {
             $_.OperatingSystem -like "*Windows Server*" -or $_.OperatingSystem -like "*Windows*"
-        } | Select-Object Name, DNSHostName, OperatingSystem, IPv4Address
+        } | Select-Object Name, DNSHostName, OperatingSystem, IPv4Address)
 
         Write-Log "Found $($computers.Count) enabled Windows computers in AD" -Level Success
         return $computers
@@ -1623,12 +1623,19 @@ function Invoke-DBExplorer {
     Write-Host "  MSSQL Discovery & Inventory Tool" -ForegroundColor DarkCyan
     Write-Host ""
 
-    # Initialize output directories
+    # Initialize output directories - resolve to absolute path so .NET static methods work
+    if (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
+        $OutputPath = Join-Path $PWD $OutputPath
+    }
     $reportDir = $OutputPath
     $logDir = Join-Path $OutputPath "Logs"
 
     if (-not (Test-Path $reportDir)) { New-Item -Path $reportDir -ItemType Directory -Force | Out-Null }
     if (-not (Test-Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
+
+    # Resolve to full path after directory creation so .NET File methods can find it
+    $reportDir = (Resolve-Path $reportDir).Path
+    $logDir = (Resolve-Path $logDir).Path
 
     $script:LogFile = Join-Path $logDir "DBExplorer_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
     Write-Log "DBExplorer started at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
