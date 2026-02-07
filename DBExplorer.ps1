@@ -921,6 +921,8 @@ function Get-SQLSecurityAssessment {
     )
 
     $findings = [System.Collections.ArrayList]::new()
+    $script:SecurityChecksFailed = 0
+    $script:SecurityChecksTotal = 0
     $queryParams = @{
         Computer      = $Computer
         InstanceName  = $InstanceName
@@ -928,6 +930,7 @@ function Get-SQLSecurityAssessment {
     }
 
     # --- Check 1: Dangerous server configurations ---
+    $script:SecurityChecksTotal++
     try {
         $configs = Invoke-RemoteSQLQuery @queryParams -Query @"
 SELECT name, CAST(value_in_use AS INT) AS ValueInUse
@@ -968,10 +971,12 @@ WHERE name IN (
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - config check failed: $_" -Level Warning
     }
 
     # --- Check 2: Authentication mode ---
+    $script:SecurityChecksTotal++
     try {
         $authMode = Invoke-RemoteSQLQuery @queryParams -Query "SELECT SERVERPROPERTY('IsIntegratedSecurityOnly') AS WindowsAuthOnly"
         if ($authMode -and $authMode.WindowsAuthOnly -eq 0) {
@@ -985,10 +990,12 @@ WHERE name IN (
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - auth mode check failed: $_" -Level Warning
     }
 
     # --- Check 3: sa account status ---
+    $script:SecurityChecksTotal++
     try {
         $saInfo = Invoke-RemoteSQLQuery @queryParams -Query @"
 SELECT name, is_disabled, is_policy_checked, is_expiration_checked
@@ -1025,10 +1032,12 @@ FROM sys.sql_logins WHERE name = 'sa'
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - sa account check failed: $_" -Level Warning
     }
 
     # --- Check 4: Excessive sysadmins ---
+    $script:SecurityChecksTotal++
     try {
         $sysadminCount = Invoke-RemoteSQLQuery @queryParams -Query @"
 SELECT COUNT(*) AS SysadminCount
@@ -1050,10 +1059,12 @@ AND sp.name NOT LIKE '##%'
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - sysadmin count check failed: $_" -Level Warning
     }
 
     # --- Check 5: TRUSTWORTHY databases ---
+    $script:SecurityChecksTotal++
     try {
         $trustworthy = Invoke-RemoteSQLQuery @queryParams -Query @"
 SELECT name AS DatabaseName
@@ -1072,10 +1083,12 @@ WHERE is_trustworthy_on = 1 AND database_id > 4
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - TRUSTWORTHY check failed: $_" -Level Warning
     }
 
     # --- Check 6: Guest access in user databases ---
+    $script:SecurityChecksTotal++
     try {
         $guestAccess = Invoke-RemoteSQLQuery @queryParams -Query @"
 DECLARE @results TABLE (DatabaseName SYSNAME)
@@ -1097,10 +1110,12 @@ SELECT DatabaseName FROM @results
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - guest access check failed: $_" -Level Warning
     }
 
     # --- Check 7: BUILTIN\Administrators login ---
+    $script:SecurityChecksTotal++
     try {
         $builtinAdmin = Invoke-RemoteSQLQuery @queryParams -Query @"
 SELECT name FROM sys.server_principals
@@ -1117,10 +1132,12 @@ WHERE name = 'BUILTIN\Administrators' AND type = 'G'
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - BUILTIN Admins check failed: $_" -Level Warning
     }
 
     # --- Check 8: Public server permissions beyond defaults ---
+    $script:SecurityChecksTotal++
     try {
         $publicPerms = Invoke-RemoteSQLQuery @queryParams -Query @"
 SELECT permission_name AS PermissionName
@@ -1141,10 +1158,12 @@ AND state_desc = 'GRANT'
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - public permissions check failed: $_" -Level Warning
     }
 
     # --- Check 9: Orphaned users ---
+    $script:SecurityChecksTotal++
     try {
         $orphaned = Invoke-RemoteSQLQuery @queryParams -Query @"
 DECLARE @results TABLE (UserName SYSNAME, DatabaseName SYSNAME)
@@ -1167,11 +1186,13 @@ SELECT UserName, DatabaseName FROM @results
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         # Orphaned user check may fail on some databases, not critical
         Write-Log "    Security assessment - orphaned users check failed: $_" -Level Warning
     }
 
     # --- Check 10: SQL logins without password policy ---
+    $script:SecurityChecksTotal++
     try {
         $weakLogins = Invoke-RemoteSQLQuery @queryParams -Query @"
 SELECT name AS LoginName
@@ -1193,10 +1214,12 @@ AND is_disabled = 0
         }
     }
     catch {
+        $script:SecurityChecksFailed++
         Write-Log "    Security assessment - weak login check failed: $_" -Level Warning
     }
 
-    Write-Log "    Security assessment complete: $($findings.Count) finding(s)" -Level $(if ($findings.Count -eq 0) { "Success" } else { "Warning" })
+    $checksRan = $script:SecurityChecksTotal - $script:SecurityChecksFailed
+    Write-Log "    Security assessment complete: $($findings.Count) finding(s), $checksRan/$script:SecurityChecksTotal checks succeeded" -Level $(if ($script:SecurityChecksFailed -gt 0) { "Warning" } elseif ($findings.Count -eq 0) { "Success" } else { "Warning" })
     return $findings
 }
 
@@ -1408,6 +1431,37 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     }
 
     # ================================================================
+    # Determine data availability for accurate assessment
+    # ================================================================
+
+    # Track how many of the 8 kill chain queries failed
+    $kcQueriesFailed = 0
+    $kcQueriesTotal = 8
+    if ($null -eq $linkedServers -and $null -eq $dangerousJobSteps -and $null -eq $impersonationPerms -and
+        $null -eq $startupProcs -and $null -eq $executeAsProcs -and $null -eq $serverTriggers -and
+        $null -eq $dbScopedCreds -and $null -eq $xpCmdShellPerms) {
+        $kcQueriesFailed = 8  # All queries returned null — likely total access failure
+    }
+
+    # Determine if security assessment data is trustworthy
+    # If security checks failed, empty findings does NOT mean "all clear" — it means "unknown"
+    $secDataAvailable = $true
+    if ($script:SecurityChecksTotal -gt 0 -and $script:SecurityChecksFailed -eq $script:SecurityChecksTotal) {
+        # ALL checks failed — we have no reliable security data at all
+        $secDataAvailable = $false
+    }
+    elseif ($script:SecurityChecksFailed -gt 0 -and (-not $SecurityFindings -or @($SecurityFindings).Count -eq 0)) {
+        # Some checks failed and no findings returned — assume data is unreliable
+        $secDataAvailable = $false
+    }
+    elseif (-not $SecurityFindings -and $script:SecurityChecksTotal -eq 0) {
+        # SecurityAssessment was never called or entirely skipped
+        $secDataAvailable = $false
+    }
+    # Flag partial failure: some checks failed but we have some findings
+    $secDataPartial = ($secDataAvailable -and $script:SecurityChecksFailed -gt 0)
+
+    # ================================================================
     # Extract data from existing inventory for cross-referencing
     # ================================================================
 
@@ -1503,8 +1557,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     # ---- EXECUTION PHASE ----
 
     # Attack Path 1: xp_cmdshell RCE
-    $ap1Status = "Mitigated"
-    $ap1State = "xp_cmdshell: Disabled"
+    $ap1Status = if (-not $secDataAvailable) { "Unable to Assess" } else { "Mitigated" }
+    $ap1State = if (-not $secDataAvailable) { "Insufficient permissions to check xp_cmdshell configuration" } else { "xp_cmdshell: Disabled" }
     $ap1Prereqs = "xp_cmdshell enabled + sysadmin role or explicit EXECUTE permission"
     if ($xpCmdShellEnabled) {
         $ap1State = "xp_cmdshell: Enabled"
@@ -1532,8 +1586,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 2: OLE Automation RCE
-    $ap2Status = "Mitigated"
-    $ap2State = "OLE Automation: Disabled"
+    $ap2Status = if (-not $secDataAvailable) { "Unable to Assess" } else { "Mitigated" }
+    $ap2State = if (-not $secDataAvailable) { "Insufficient permissions to check OLE Automation configuration" } else { "OLE Automation: Disabled" }
     $ap2Prereqs = "OLE Automation Procedures enabled + sysadmin role"
     if ($oleEnabled) {
         $ap2State = "OLE Automation: Enabled"
@@ -1559,8 +1613,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 3: CLR Assembly Execution
-    $ap3Status = "Mitigated"
-    $ap3State = "CLR: Disabled"
+    $ap3Status = if (-not $secDataAvailable) { "Unable to Assess" } else { "Mitigated" }
+    $ap3State = if (-not $secDataAvailable) { "Insufficient permissions to check CLR configuration" } else { "CLR: Disabled" }
     $ap3Prereqs = "CLR enabled + TRUSTWORTHY database + db_owner role in that database"
     if ($clrEnabled) {
         $ap3State = "CLR: Enabled"
@@ -1591,8 +1645,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 4: Agent Job Command Execution
-    $ap4Status = "Mitigated"
-    $ap4State = "No dangerous job steps found"
+    $ap4DataMissing = (-not $secDataAvailable) -and ($null -eq $dangerousJobSteps) -and (-not $ServerConfig -or -not $ServerConfig.Services)
+    $ap4Status = if ($ap4DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap4State = if ($ap4DataMissing) { "Insufficient permissions to check agent job steps" } else { "No dangerous job steps found" }
     $ap4Prereqs = "SQL Agent running + CmdExec/PowerShell job steps + sysadmin-owned jobs"
     $dangerousStepCount = if ($dangerousJobSteps) { @($dangerousJobSteps).Count } else { 0 }
     if ($dangerousStepCount -gt 0) {
@@ -1635,8 +1690,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     # ---- PRIVILEGE ESCALATION PHASE ----
 
     # Attack Path 5: TRUSTWORTHY db_owner to sysadmin
-    $ap5Status = "Mitigated"
-    $ap5State = "No TRUSTWORTHY user databases"
+    $ap5Status = if (-not $secDataAvailable) { "Unable to Assess" } else { "Mitigated" }
+    $ap5State = if (-not $secDataAvailable) { "Insufficient permissions to check TRUSTWORTHY databases" } else { "No TRUSTWORTHY user databases" }
     $ap5Prereqs = "TRUSTWORTHY database + non-sysadmin user with db_owner role"
     if ($trustworthyDbs) {
         if ($trustworthyDbOwners.Count -gt 0) {
@@ -1662,8 +1717,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 6: Impersonation to sysadmin
-    $ap6Status = "Mitigated"
-    $ap6State = "No IMPERSONATE permissions found"
+    $ap6DataMissing = (-not $secDataAvailable) -and ($null -eq $impersonationPerms)
+    $ap6Status = if ($ap6DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap6State = if ($ap6DataMissing) { "Insufficient permissions to check IMPERSONATE grants" } else { "No IMPERSONATE permissions found" }
     $ap6Prereqs = "IMPERSONATE permission on a sysadmin login"
     $impCount = if ($impersonationPerms) { @($impersonationPerms).Count } else { 0 }
     if ($impCount -gt 0) {
@@ -1691,8 +1747,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 7: Service Account Exploitation
-    $ap7Status = "Mitigated"
-    $ap7State = "Service account: $serviceAccount"
+    $ap7DataMissing = (-not $secDataAvailable) -and $serviceAccount -eq "Unknown"
+    $ap7Status = if ($ap7DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap7State = if ($ap7DataMissing) { "Insufficient permissions to check service account and code execution paths" } else { "Service account: $serviceAccount" }
     $ap7Prereqs = "SQL service running as high-privilege account + code execution capability (xp_cmdshell/CLR)"
     if ($highPrivService) {
         if ($xpCmdShellEnabled -or $clrEnabled) {
@@ -1723,8 +1780,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 8: Ownership Chaining
-    $ap8Status = "Mitigated"
-    $ap8State = "Cross-DB ownership chaining: Disabled"
+    $ap8DataMissing = (-not $secDataAvailable) -and ($null -eq $executeAsProcs)
+    $ap8Status = if ($ap8DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap8State = if ($ap8DataMissing) { "Insufficient permissions to check cross-DB ownership chaining" } else { "Cross-DB ownership chaining: Disabled" }
     $ap8Prereqs = "Cross-database ownership chaining enabled + EXECUTE AS OWNER stored procedures"
     $execAsCount = if ($executeAsProcs) { @($executeAsProcs).Count } else { 0 }
     if ($crossDbChaining) {
@@ -1761,8 +1819,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     # ---- LATERAL MOVEMENT PHASE ----
 
     # Attack Path 9: Linked Server Pivot
-    $ap9Status = "Mitigated"
-    $ap9State = "No linked servers configured"
+    $ap9DataMissing = (-not $secDataAvailable) -and ($null -eq $linkedServers)
+    $ap9Status = if ($ap9DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap9State = if ($ap9DataMissing) { "Insufficient permissions to check linked servers" } else { "No linked servers configured" }
     $ap9Prereqs = "Linked servers with RPC out enabled + saved credentials or self-credential passthrough"
     $linkedCount = if ($linkedServers) { @($linkedServers).Count } else { 0 }
     if ($linkedCount -gt 0) {
@@ -1801,8 +1860,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 10: Ad Hoc Distributed Queries
-    $ap10Status = "Mitigated"
-    $ap10State = "Ad Hoc Distributed Queries: Disabled"
+    $ap10Status = if (-not $secDataAvailable) { "Unable to Assess" } else { "Mitigated" }
+    $ap10State = if (-not $secDataAvailable) { "Insufficient permissions to check Ad Hoc Distributed Queries configuration" } else { "Ad Hoc Distributed Queries: Disabled" }
     $ap10Prereqs = "Ad Hoc Distributed Queries enabled + sysadmin or CONTROL SERVER permission"
     if ($adHocEnabled) {
         $ap10State = "Ad Hoc Distributed Queries: Enabled"
@@ -1828,8 +1887,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 11: Database Mail Exfiltration
-    $ap11Status = "Mitigated"
-    $ap11State = "Database Mail: Disabled"
+    $ap11Status = if (-not $secDataAvailable) { "Unable to Assess" } else { "Mitigated" }
+    $ap11State = if (-not $secDataAvailable) { "Insufficient permissions to check Database Mail configuration" } else { "Database Mail: Disabled" }
     $ap11Prereqs = "Database Mail XPs enabled + EXECUTE permission on sp_send_dbmail or sysadmin"
     if ($dbMailEnabled) {
         $ap11State = "Database Mail: Enabled"
@@ -1857,8 +1916,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     # ---- PERSISTENCE PHASE ----
 
     # Attack Path 12: Startup Procedure Persistence
-    $ap12Status = "Mitigated"
-    $ap12State = "Startup procedure scanning: Disabled"
+    $ap12DataMissing = (-not $secDataAvailable) -and ($null -eq $startupProcs)
+    $ap12Status = if ($ap12DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap12State = if ($ap12DataMissing) { "Insufficient permissions to check startup procedure configuration" } else { "Startup procedure scanning: Disabled" }
     $ap12Prereqs = "scan for startup procs enabled + existing or createable startup procedures"
     $startupCount = if ($startupProcs) { @($startupProcs).Count } else { 0 }
     if ($startupProcsScan) {
@@ -1886,8 +1946,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 13: Agent Job Persistence
-    $ap13Status = "Mitigated"
-    $ap13State = "SQL Agent: Not running"
+    $ap13DataMissing = (-not $secDataAvailable) -and (-not $ServerConfig -or -not $ServerConfig.Services)
+    $ap13Status = if ($ap13DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap13State = if ($ap13DataMissing) { "Insufficient permissions to check SQL Agent status" } else { "SQL Agent: Not running" }
     $ap13Prereqs = "SQL Agent running + sysadmin or SQLAgentOperatorRole to create/modify jobs"
     if ($agentRunning) {
         $ap13State = "SQL Agent: Running"
@@ -1913,8 +1974,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 14: Trigger-based Persistence
-    $ap14Status = "Mitigated"
-    $ap14State = "No enabled server triggers found"
+    $ap14DataMissing = (-not $secDataAvailable) -and ($null -eq $serverTriggers)
+    $ap14Status = if ($ap14DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap14State = if ($ap14DataMissing) { "Insufficient permissions to check server triggers" } else { "No enabled server triggers found" }
     $ap14Prereqs = "CREATE/ALTER trigger permission + DDL/DML triggers on server or database objects"
     $triggerCount = if ($serverTriggers) { @($serverTriggers).Count } else { 0 }
     if ($triggerCount -gt 0) {
@@ -1941,8 +2003,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     # ---- CREDENTIAL ACCESS PHASE ----
 
     # Attack Path 15: sa Brute Force
-    $ap15Status = "Mitigated"
-    $ap15State = "sa account: Disabled or Windows-only auth"
+    $ap15Status = if (-not $secDataAvailable) { "Unable to Assess" } else { "Mitigated" }
+    $ap15State = if (-not $secDataAvailable) { "Insufficient permissions to check sa account and authentication mode" } else { "sa account: Disabled or Windows-only auth" }
     $ap15Prereqs = "sa account enabled + mixed mode authentication + weak/no password policy"
     if ($saEnabled -and $mixedMode) {
         if ($saNoPolicy) {
@@ -1971,8 +2033,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     })
 
     # Attack Path 16: Credential Harvesting
-    $ap16Status = "Mitigated"
-    $ap16State = "No stored credentials found"
+    $ap16DataMissing = (-not $secDataAvailable) -and ($null -eq $linkedServers) -and ($null -eq $dbScopedCreds) -and ($null -eq $dangerousJobSteps)
+    $ap16Status = if ($ap16DataMissing) { "Unable to Assess" } else { "Mitigated" }
+    $ap16State = if ($ap16DataMissing) { "Insufficient permissions to check stored credentials" } else { "No stored credentials found" }
     $ap16Prereqs = "Linked server saved credentials OR agent job embedded credentials OR database-scoped credentials"
     $credSources = @()
     # Check linked server saved credentials
@@ -2017,16 +2080,20 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         $exploitable = @($pathsInPhase | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
         $partial = @($pathsInPhase | Where-Object { $_.Exploitability -eq 'Partially Exploitable' }).Count
         $mitigated = @($pathsInPhase | Where-Object { $_.Exploitability -eq 'Mitigated' }).Count
+        $unableToAssess = @($pathsInPhase | Where-Object { $_.Exploitability -eq 'Unable to Assess' }).Count
         $risk = if ($exploitable -gt 0) { 'Critical' }
                 elseif ($partial -gt 0) { 'Warning' }
+                elseif ($unableToAssess -gt 0) { 'Incomplete Data' }
                 else { 'Info' }
-        $keyNames = @($pathsInPhase | Where-Object { $_.Exploitability -ne 'Mitigated' } | ForEach-Object { $_.AttackPath })
-        $keyNamesStr = if ($keyNames.Count -gt 0) { $keyNames -join ', ' } else { 'None' }
+        $keyNames = @($pathsInPhase | Where-Object { $_.Exploitability -ne 'Mitigated' -and $_.Exploitability -ne 'Unable to Assess' } | ForEach-Object { $_.AttackPath })
+        $unableNames = @($pathsInPhase | Where-Object { $_.Exploitability -eq 'Unable to Assess' } | ForEach-Object { $_.AttackPath })
+        $allKeyNames = $keyNames + $unableNames
+        $keyNamesStr = if ($allKeyNames.Count -gt 0) { $allKeyNames -join ', ' } else { 'None' }
 
-        # Determine lowest privilege among non-mitigated paths in this phase
-        $activePaths = @($pathsInPhase | Where-Object { $_.Exploitability -ne 'Mitigated' })
+        # Determine lowest privilege among non-mitigated paths in this phase (exclude Unable to Assess)
+        $activePaths = @($pathsInPhase | Where-Object { $_.Exploitability -ne 'Mitigated' -and $_.Exploitability -ne 'Unable to Assess' })
         $privOrder = @('None (Unauthenticated)', 'Low (Any Login)', 'Medium (db_owner)', 'Medium (DB Role)', 'High (Sysadmin)')
-        $lowestPriv = 'N/A'
+        $lowestPriv = if ($unableToAssess -gt 0 -and $activePaths.Count -eq 0) { 'Unknown' } else { 'N/A' }
         foreach ($p in $privOrder) {
             $matchFound = @($activePaths | Where-Object { $_.PrivilegeLevel -eq $p })
             if ($matchFound.Count -gt 0) {
@@ -2040,6 +2107,7 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
             ExploitableCount = $exploitable
             PartialCount     = $partial
             MitigatedCount   = $mitigated
+            UnassessedCount  = $unableToAssess
             OverallRisk      = $risk
             LowestPrivilege  = $lowestPriv
             KeyFindings      = $keyNamesStr
@@ -2047,8 +2115,9 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
     }
 
     $exploitableTotal = @($attackPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
-    $logLevel = if ($exploitableTotal -gt 0) { "Warning" } else { "Success" }
-    Write-Log "    Kill chain assessment complete: $exploitableTotal exploitable path(s) of $($attackPaths.Count) evaluated" -Level $logLevel
+    $unableToAssessTotal = @($attackPaths | Where-Object { $_.Exploitability -eq 'Unable to Assess' }).Count
+    $logLevel = if ($exploitableTotal -gt 0) { "Warning" } elseif ($unableToAssessTotal -gt 0) { "Warning" } else { "Success" }
+    Write-Log "    Kill chain assessment complete: $exploitableTotal exploitable, $unableToAssessTotal unable to assess, of $($attackPaths.Count) paths" -Level $logLevel
 
     return @{
         AttackPaths     = $attackPaths
@@ -2126,6 +2195,7 @@ function ConvertTo-HtmlTable {
             if ($prop -eq "Exploitability") {
                 if ($val -eq "Exploitable") { $cellClass = " class='status-critical'" }
                 elseif ($val -eq "Partially Exploitable") { $cellClass = " class='status-warning'" }
+                elseif ($val -eq "Unable to Assess") { $cellClass = " class='status-unable'" }
                 elseif ($val -eq "Mitigated") { $cellClass = " class='status-ok'" }
             }
 
@@ -2133,7 +2203,13 @@ function ConvertTo-HtmlTable {
             if ($prop -eq "OverallRisk") {
                 if ($val -eq "Critical") { $cellClass = " class='status-critical'" }
                 elseif ($val -eq "Warning") { $cellClass = " class='status-warning'" }
+                elseif ($val -eq "Incomplete Data") { $cellClass = " class='status-unable'" }
                 elseif ($val -eq "Info") { $cellClass = " class='status-ok'" }
+            }
+
+            # Color coding for unassessed count (highlight if any paths couldn't be assessed)
+            if ($prop -eq "UnassessedCount" -and $val -ne $null -and $val -gt 0) {
+                $cellClass = " class='status-unable'"
             }
 
             # Color coding for privilege level (lower privilege = higher risk to defenders)
@@ -2142,6 +2218,7 @@ function ConvertTo-HtmlTable {
                 elseif ($val -match "^Low") { $cellClass = " class='status-critical'" }
                 elseif ($val -match "^Medium") { $cellClass = " class='status-warning'" }
                 elseif ($val -match "^High") { $cellClass = " class='status-ok'" }
+                elseif ($val -eq "Unknown") { $cellClass = " class='status-unable'" }
             }
 
             # Color coding for auth required (highlight unauthenticated)
@@ -2319,6 +2396,7 @@ function Get-HtmlHeader {
     .status-ok { color: #28a745; font-weight: 600; }
     .status-warning { color: #ffc107; font-weight: 600; }
     .status-critical { color: #dc3545; font-weight: 600; }
+    .status-unable { color: #6f42c1; font-weight: 600; }
     .no-data {
         text-align: center;
         color: #6c757d;
@@ -2414,17 +2492,22 @@ function New-ServerReport {
     $secWarning = if ($InventoryData.SecurityAssessment) { @($secFindings | Where-Object { $_.Severity -eq 'Warning' }).Count } else { 0 }
     $secInfo = if ($InventoryData.SecurityAssessment) { @($secFindings | Where-Object { $_.Severity -eq 'Info' }).Count } else { 0 }
     $secTotal = $secCritical + $secWarning + $secInfo
-    $secColor = if ($secCritical -gt 0) { '#dc3545' } elseif ($secWarning -gt 0) { '#ffc107' } else { '#28a745' }
+    $secChecksFailed = if ($script:SecurityChecksFailed) { $script:SecurityChecksFailed } else { 0 }
+    $secChecksTotal = if ($script:SecurityChecksTotal) { $script:SecurityChecksTotal } else { 0 }
+    $secIncomplete = ($secChecksFailed -gt 0)
+    $secColor = if ($secIncomplete) { '#6f42c1' } elseif ($secCritical -gt 0) { '#dc3545' } elseif ($secWarning -gt 0) { '#ffc107' } else { '#28a745' }
 
     # Kill chain assessment counts
     $kcExploitable = 0
     $kcPartial = 0
+    $kcUnableToAssess = 0
     if ($InventoryData.KillChainAssessment -and $InventoryData.KillChainAssessment.AttackPaths) {
         $kcPaths = @($InventoryData.KillChainAssessment.AttackPaths)
         $kcExploitable = @($kcPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
         $kcPartial = @($kcPaths | Where-Object { $_.Exploitability -eq 'Partially Exploitable' }).Count
+        $kcUnableToAssess = @($kcPaths | Where-Object { $_.Exploitability -eq 'Unable to Assess' }).Count
     }
-    $kcColor = if ($kcExploitable -gt 0) { '#dc3545' } elseif ($kcPartial -gt 0) { '#ffc107' } else { '#28a745' }
+    $kcColor = if ($kcExploitable -gt 0) { '#dc3545' } elseif ($kcPartial -gt 0) { '#ffc107' } elseif ($kcUnableToAssess -gt 0) { '#6f42c1' } else { '#28a745' }
 
     $html = [System.Text.StringBuilder]::new()
     [void]$html.AppendLine((Get-HtmlHeader))
@@ -2492,20 +2575,25 @@ function New-ServerReport {
                 <div class="metric-label">Max Memory (MB)</div>
             </div>
             <div class="metric-card">
-                <div class="metric-value" style="color: $secColor">$secTotal</div>
-                <div class="metric-label">Security Findings</div>
+                <div class="metric-value" style="color: $secColor">$(if ($secIncomplete) { "$secTotal*" } else { $secTotal })</div>
+                <div class="metric-label">Security Findings$(if ($secIncomplete) { "<br><small style='color:#6f42c1'>$secChecksFailed/$secChecksTotal checks failed</small>" })</div>
             </div>
             <div class="metric-card">
-                <div class="metric-value" style="color: $kcColor">$kcExploitable</div>
-                <div class="metric-label">Exploitable Paths</div>
+                <div class="metric-value" style="color: $kcColor">$(if ($kcUnableToAssess -gt 0) { "$kcExploitable*" } else { $kcExploitable })</div>
+                <div class="metric-label">Exploitable Paths$(if ($kcUnableToAssess -gt 0) { "<br><small style='color:#6f42c1'>$kcUnableToAssess paths not assessed</small>" })</div>
             </div>
         </div>
 "@)
 
     # Section: Security Assessment
-    $secActiveClass = if ($secCritical -gt 0) { " active" } else { "" }
-    $secHeaderActive = if ($secCritical -gt 0) { " active" } else { "" }
-    $secSummaryText = if ($secTotal -eq 0) { "No issues found" } else { "$secCritical Critical, $secWarning Warning, $secInfo Info" }
+    $secActiveClass = if ($secCritical -gt 0 -or $secIncomplete) { " active" } else { "" }
+    $secHeaderActive = if ($secCritical -gt 0 -or $secIncomplete) { " active" } else { "" }
+    $secSummaryText = if ($secIncomplete -and $secTotal -eq 0) { "INCOMPLETE - $secChecksFailed of $secChecksTotal checks failed due to insufficient permissions" }
+                      elseif ($secIncomplete) { "$secCritical Critical, $secWarning Warning, $secInfo Info - INCOMPLETE ($secChecksFailed checks failed)" }
+                      elseif ($secTotal -eq 0) { "No issues found" }
+                      else { "$secCritical Critical, $secWarning Warning, $secInfo Info" }
+    $secEmptyMsg = if ($secIncomplete) { "Security checks could not be completed due to insufficient permissions. This does NOT mean the server is secure - it means the security posture is unknown." }
+                   else { 'No security findings - all checks passed' }
 
     [void]$html.AppendLine(@"
         <div class="section">
@@ -2513,15 +2601,19 @@ function New-ServerReport {
                 Security Assessment ($secSummaryText) <span class="toggle">&#9654;</span>
             </div>
             <div id="sec-assessment" class="section-content$secActiveClass">
-                $(ConvertTo-HtmlTable -Data $InventoryData.SecurityAssessment -Properties @('Finding','Severity','CurrentValue','Detail','Remediation') -EmptyMessage 'No security findings - all checks passed')
+                $(if ($secIncomplete) { "<div style='background:#f3e8ff;border-left:4px solid #6f42c1;padding:12px;margin-bottom:15px;border-radius:4px;'><strong style='color:#6f42c1'>&#9888; Incomplete Assessment:</strong> $secChecksFailed of $secChecksTotal security checks failed due to insufficient permissions. Results below are partial and may not reflect the true security posture of this server.</div>" })
+                $(ConvertTo-HtmlTable -Data $InventoryData.SecurityAssessment -Properties @('Finding','Severity','CurrentValue','Detail','Remediation') -EmptyMessage $secEmptyMsg)
             </div>
         </div>
 "@)
 
     # Section: Kill Chain Assessment
-    $kcActiveClass = if ($kcExploitable -gt 0) { " active" } else { "" }
-    $kcHeaderActive = if ($kcExploitable -gt 0) { " active" } else { "" }
-    $kcSummaryText = if ($kcExploitable -gt 0) { "$kcExploitable Exploitable, $kcPartial Partial" }
+    $kcActiveClass = if ($kcExploitable -gt 0 -or $kcUnableToAssess -gt 0) { " active" } else { "" }
+    $kcHeaderActive = if ($kcExploitable -gt 0 -or $kcUnableToAssess -gt 0) { " active" } else { "" }
+    $kcSummaryText = if ($kcExploitable -gt 0 -and $kcUnableToAssess -gt 0) { "$kcExploitable Exploitable, $kcPartial Partial, $kcUnableToAssess Not Assessed" }
+                     elseif ($kcExploitable -gt 0) { "$kcExploitable Exploitable, $kcPartial Partial" }
+                     elseif ($kcUnableToAssess -gt 0 -and $kcPartial -gt 0) { "$kcPartial Partially Exploitable, $kcUnableToAssess Not Assessed" }
+                     elseif ($kcUnableToAssess -gt 0) { "INCOMPLETE - $kcUnableToAssess of 16 paths could not be assessed" }
                      elseif ($kcPartial -gt 0) { "$kcPartial Partially Exploitable" }
                      else { "All paths mitigated" }
 
@@ -2531,10 +2623,11 @@ function New-ServerReport {
                 Kill Chain Assessment ($kcSummaryText) <span class="toggle">&#9654;</span>
             </div>
             <div id="sec-killchain" class="section-content$kcActiveClass">
+                $(if ($kcUnableToAssess -gt 0) { "<div style='background:#f3e8ff;border-left:4px solid #6f42c1;padding:12px;margin-bottom:15px;border-radius:4px;'><strong style='color:#6f42c1'>&#9888; Incomplete Assessment:</strong> $kcUnableToAssess of 16 attack paths could not be evaluated due to insufficient permissions. Paths marked 'Unable to Assess' should NOT be treated as mitigated &mdash; they represent unknown risk.</div>" })
                 <div class="sub-section">
                     <h3>Kill Chain Phase Summary</h3>
                     <div class="table-scroll">
-                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.KillChainPhases } else { $null }) -Properties @('Phase','ExploitableCount','PartialCount','MitigatedCount','OverallRisk','LowestPrivilege','KeyFindings') -EmptyMessage 'Kill chain assessment not available')
+                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.KillChainPhases } else { $null }) -Properties @('Phase','ExploitableCount','PartialCount','MitigatedCount','UnassessedCount','OverallRisk','LowestPrivilege','KeyFindings') -EmptyMessage 'Kill chain assessment not available')
                     </div>
                 </div>
                 <div class="sub-section">
@@ -2698,7 +2791,8 @@ function New-SummaryReport {
     $totalSizeGB = [math]::Round(($ServerResults | ForEach-Object { if ($_.Databases) { ($_.Databases | Measure-Object -Property TotalSizeMB -Sum).Sum } else { 0 } } | Measure-Object -Sum).Sum / 1024, 2)
     $totalSecFindings = ($ServerResults | ForEach-Object { if ($_.SecurityAssessment) { @($_.SecurityAssessment).Count } else { 0 } } | Measure-Object -Sum).Sum
     $totalSecCritical = ($ServerResults | ForEach-Object { if ($_.SecurityAssessment) { @($_.SecurityAssessment | Where-Object { $_.Severity -eq 'Critical' }).Count } else { 0 } } | Measure-Object -Sum).Sum
-    $summarySecColor = if ($totalSecCritical -gt 0) { '#dc3545' } elseif ($totalSecFindings -gt 0) { '#ffc107' } else { '#28a745' }
+    $totalSecIncomplete = @($ServerResults | Where-Object { $_.Errors -and @($_.Errors | Where-Object { $_ -match 'Security assessment failed|security.*check failed' }).Count -gt 0 }).Count
+    $summarySecColor = if ($totalSecCritical -gt 0) { '#dc3545' } elseif ($totalSecIncomplete -gt 0) { '#6f42c1' } elseif ($totalSecFindings -gt 0) { '#ffc107' } else { '#28a745' }
 
     # Kill chain aggregate metrics
     $totalExploitable = ($ServerResults | ForEach-Object {
@@ -2706,7 +2800,12 @@ function New-SummaryReport {
             @($_.KillChainAssessment.AttackPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
         } else { 0 }
     } | Measure-Object -Sum).Sum
-    $summaryKcColor = if ($totalExploitable -gt 0) { '#dc3545' } else { '#28a745' }
+    $totalUnableToAssess = ($ServerResults | ForEach-Object {
+        if ($_.KillChainAssessment -and $_.KillChainAssessment.AttackPaths) {
+            @($_.KillChainAssessment.AttackPaths | Where-Object { $_.Exploitability -eq 'Unable to Assess' }).Count
+        } else { 0 }
+    } | Measure-Object -Sum).Sum
+    $summaryKcColor = if ($totalExploitable -gt 0) { '#dc3545' } elseif ($totalUnableToAssess -gt 0) { '#6f42c1' } else { '#28a745' }
 
     $html = [System.Text.StringBuilder]::new()
     [void]$html.AppendLine((Get-HtmlHeader))
@@ -2761,12 +2860,12 @@ function New-SummaryReport {
                 <div class="metric-label">Legacy OS</div>
             </div>
             <div class="metric-card">
-                <div class="metric-value" style="color: $summarySecColor">$totalSecFindings</div>
-                <div class="metric-label">Security Findings</div>
+                <div class="metric-value" style="color: $summarySecColor">$(if ($totalSecIncomplete -gt 0) { "$totalSecFindings*" } else { $totalSecFindings })</div>
+                <div class="metric-label">Security Findings$(if ($totalSecIncomplete -gt 0) { "<br><small style='color:#6f42c1'>$totalSecIncomplete server(s) incomplete</small>" })</div>
             </div>
             <div class="metric-card">
-                <div class="metric-value" style="color: $summaryKcColor">$totalExploitable</div>
-                <div class="metric-label">Exploitable Kill Chains</div>
+                <div class="metric-value" style="color: $summaryKcColor">$(if ($totalUnableToAssess -gt 0) { "$totalExploitable*" } else { $totalExploitable })</div>
+                <div class="metric-label">Exploitable Kill Chains$(if ($totalUnableToAssess -gt 0) { "<br><small style='color:#6f42c1'>$totalUnableToAssess paths not assessed</small>" })</div>
             </div>
         </div>
 "@)
@@ -2792,12 +2891,19 @@ function New-SummaryReport {
 
         $srvSecCritical = if ($srv.SecurityAssessment) { @($srv.SecurityAssessment | Where-Object { $_.Severity -eq 'Critical' }).Count } else { 0 }
         $srvSecWarning = if ($srv.SecurityAssessment) { @($srv.SecurityAssessment | Where-Object { $_.Severity -eq 'Warning' }).Count } else { 0 }
-        $srvSecStatus = if ($srvSecCritical -gt 0) { "$srvSecCritical Critical" }
+        # Check if security assessment had failures (tracked by script-scope vars during collection)
+        $srvHasErrors = ($srv.Errors -and @($srv.Errors | Where-Object { $_ -match 'Security assessment failed|security.*check failed' }).Count -gt 0)
+        $srvSecStatus = if ($srvHasErrors -and $srvSecCritical -eq 0 -and $srvSecWarning -eq 0) { "Incomplete" }
+                        elseif ($srvSecCritical -gt 0) { "$srvSecCritical Critical" }
                         elseif ($srvSecWarning -gt 0) { "$srvSecWarning Warning" }
+                        elseif ($srvHasErrors) { "Incomplete" }
                         else { "Clean" }
 
         $srvExploitable = if ($srv.KillChainAssessment -and $srv.KillChainAssessment.AttackPaths) {
             @($srv.KillChainAssessment.AttackPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
+        } else { 0 }
+        $srvUnableToAssess = if ($srv.KillChainAssessment -and $srv.KillChainAssessment.AttackPaths) {
+            @($srv.KillChainAssessment.AttackPaths | Where-Object { $_.Exploitability -eq 'Unable to Assess' }).Count
         } else { 0 }
 
         $srvHostOS = if ($srv.OperatingSystem -and $srv.OperatingSystem -ne "Unknown") { $srv.OperatingSystem } else { "N/A" }
@@ -2812,6 +2918,7 @@ function New-SummaryReport {
             BackupHealth     = $backupHealth
             SecurityStatus   = $srvSecStatus
             ExploitablePaths = $srvExploitable
+            UnassessedPaths  = $srvUnableToAssess
             ReportFile       = $srv.ReportFile
         }
     }
@@ -2840,9 +2947,15 @@ function New-SummaryReport {
         }
         $secClass = if ($row.SecurityStatus -match 'Critical') { "status-critical" }
                     elseif ($row.SecurityStatus -match 'Warning') { "status-warning" }
+                    elseif ($row.SecurityStatus -eq 'Incomplete') { "status-unable" }
                     else { "status-ok" }
-        $kcClass = if ($row.ExploitablePaths -gt 0) { "status-critical" } else { "status-ok" }
-        $kcDisplay = if ($row.ExploitablePaths -gt 0) { "$($row.ExploitablePaths) Exploitable" } else { "None" }
+        $kcClass = if ($row.ExploitablePaths -gt 0) { "status-critical" }
+                   elseif ($row.UnassessedPaths -gt 0) { "status-unable" }
+                   else { "status-ok" }
+        $kcDisplay = if ($row.ExploitablePaths -gt 0 -and $row.UnassessedPaths -gt 0) { "$($row.ExploitablePaths) Exploitable, $($row.UnassessedPaths) N/A" }
+                     elseif ($row.ExploitablePaths -gt 0) { "$($row.ExploitablePaths) Exploitable" }
+                     elseif ($row.UnassessedPaths -gt 0) { "$($row.UnassessedPaths) Not Assessed" }
+                     else { "None" }
         $reportLink = if ($row.ReportFile) {
             $fileName = Split-Path $row.ReportFile -Leaf
             "<a href='$([System.Web.HttpUtility]::HtmlEncode($fileName))'>View Report</a>"
