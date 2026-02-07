@@ -324,9 +324,10 @@ function Get-CredentialFallback {
         return $null
     }
 
+    $authType = if ($choice -eq "S") { "SQL" } else { "Windows" }
     $credInfo = @{
         Credential = $cred
-        AuthType   = if ($choice -eq "S") { "SQL" } else { "Windows" }
+        AuthType   = $authType
     }
 
     # Cache for reuse
@@ -1517,10 +1518,13 @@ function New-SummaryReport {
                         elseif ($worstBackup -le 7) { "Warning" }
                         else { "Critical" }
 
+        $srvVersion = if ($props) { $props.ProductVersion } else { "N/A" }
+        $srvEdition = if ($props) { $props.Edition } else { "N/A" }
+
         [PSCustomObject]@{
             Server       = $srv.Computer
-            Version      = if ($props) { $props.ProductVersion } else { "N/A" }
-            Edition      = if ($props) { $props.Edition } else { "N/A" }
+            Version      = $srvVersion
+            Edition      = $srvEdition
             Databases    = $dbCount
             "Size (GB)"  = $sizeGB
             BackupHealth = $backupHealth
