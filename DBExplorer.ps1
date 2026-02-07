@@ -892,6 +892,293 @@ ORDER BY j.name
     }
 }
 
+function Get-SQLSecurityAssessment {
+    param(
+        [Parameter(Mandatory)] [string]$Computer,
+        [Parameter(Mandatory)] [string]$InstanceName,
+        [System.Management.Automation.PSCredential]$WinCredential
+    )
+
+    $findings = [System.Collections.ArrayList]::new()
+    $queryParams = @{
+        Computer      = $Computer
+        InstanceName  = $InstanceName
+        WinCredential = $WinCredential
+    }
+
+    # --- Check 1: Dangerous server configurations ---
+    try {
+        $configs = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT name, CAST(value_in_use AS INT) AS ValueInUse
+FROM sys.configurations
+WHERE name IN (
+    'xp_cmdshell', 'clr enabled', 'Ole Automation Procedures',
+    'Ad Hoc Distributed Queries', 'Database Mail XPs',
+    'remote access', 'remote admin connections',
+    'scan for startup procs', 'cross db ownership chaining'
+)
+"@
+
+        $configChecks = @(
+            @{ Name = 'xp_cmdshell';                Severity = 'Critical'; Finding = 'xp_cmdshell is enabled';                     Detail = 'Allows execution of OS commands from SQL Server. Major attack vector for privilege escalation.'; Remediation = "EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;" }
+            @{ Name = 'clr enabled';                Severity = 'Warning';  Finding = 'CLR integration is enabled';                 Detail = 'Allows .NET assemblies to run inside SQL Server. Can be exploited to execute arbitrary code.'; Remediation = "EXEC sp_configure 'clr enabled', 0; RECONFIGURE;" }
+            @{ Name = 'Ole Automation Procedures';  Severity = 'Warning';  Finding = 'OLE Automation Procedures enabled';          Detail = 'Allows COM object instantiation from T-SQL. Can access file system and network.'; Remediation = "EXEC sp_configure 'Ole Automation Procedures', 0; RECONFIGURE;" }
+            @{ Name = 'Ad Hoc Distributed Queries'; Severity = 'Warning';  Finding = 'Ad Hoc Distributed Queries enabled';         Detail = 'Allows OPENROWSET/OPENDATASOURCE to access remote data sources without linked server.'; Remediation = "EXEC sp_configure 'Ad Hoc Distributed Queries', 0; RECONFIGURE;" }
+            @{ Name = 'Database Mail XPs';          Severity = 'Info';     Finding = 'Database Mail XPs enabled';                  Detail = 'Allows sending email from SQL Server. Can be abused for data exfiltration.'; Remediation = "EXEC sp_configure 'Database Mail XPs', 0; RECONFIGURE;" }
+            @{ Name = 'remote access';              Severity = 'Warning';  Finding = 'Remote access is enabled';                   Detail = 'Legacy feature allowing remote stored procedure calls. Deprecated and should be disabled.'; Remediation = "EXEC sp_configure 'remote access', 0; RECONFIGURE;" }
+            @{ Name = 'remote admin connections';   Severity = 'Info';     Finding = 'Remote DAC (Dedicated Admin Connection) enabled'; Detail = 'Allows remote diagnostic connections. Useful but increases attack surface.'; Remediation = "EXEC sp_configure 'remote admin connections', 0; RECONFIGURE;" }
+            @{ Name = 'scan for startup procs';     Severity = 'Warning';  Finding = 'Scan for startup procedures enabled';        Detail = 'SQL Server scans for and runs stored procedures marked for auto-execution at startup.'; Remediation = "EXEC sp_configure 'scan for startup procs', 0; RECONFIGURE;" }
+            @{ Name = 'cross db ownership chaining'; Severity = 'Warning'; Finding = 'Cross-database ownership chaining enabled';  Detail = 'Allows cross-database access via ownership chains. Can bypass database-level permissions.'; Remediation = "EXEC sp_configure 'cross db ownership chaining', 0; RECONFIGURE;" }
+        )
+
+        if ($configs) {
+            foreach ($check in $configChecks) {
+                $cfg = $configs | Where-Object { $_.name -eq $check.Name }
+                if ($cfg -and $cfg.ValueInUse -eq 1) {
+                    [void]$findings.Add([PSCustomObject]@{
+                        Finding     = $check.Finding
+                        Severity    = $check.Severity
+                        CurrentValue = "Enabled (1)"
+                        Detail      = $check.Detail
+                        Remediation = $check.Remediation
+                    })
+                }
+            }
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - config check failed: $_" -Level Warning
+    }
+
+    # --- Check 2: Authentication mode ---
+    try {
+        $authMode = Invoke-RemoteSQLQuery @queryParams -Query "SELECT SERVERPROPERTY('IsIntegratedSecurityOnly') AS WindowsAuthOnly"
+        if ($authMode -and $authMode.WindowsAuthOnly -eq 0) {
+            [void]$findings.Add([PSCustomObject]@{
+                Finding      = 'Mixed mode authentication enabled'
+                Severity     = 'Warning'
+                CurrentValue = 'SQL and Windows Authentication'
+                Detail       = 'SQL Server logins use password-based auth which is weaker than Windows/Kerberos authentication.'
+                Remediation  = 'Switch to Windows Authentication Only mode if SQL logins are not required.'
+            })
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - auth mode check failed: $_" -Level Warning
+    }
+
+    # --- Check 3: sa account status ---
+    try {
+        $saInfo = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT name, is_disabled, is_policy_checked, is_expiration_checked
+FROM sys.sql_logins WHERE name = 'sa'
+"@
+        if ($saInfo) {
+            if ($saInfo.is_disabled -eq 0) {
+                [void]$findings.Add([PSCustomObject]@{
+                    Finding      = 'sa account is enabled'
+                    Severity     = 'Critical'
+                    CurrentValue = 'Enabled'
+                    Detail       = 'The built-in sa account is a well-known target. Should be disabled and a renamed admin account used instead.'
+                    Remediation  = 'ALTER LOGIN [sa] DISABLE;'
+                })
+            }
+            if ($saInfo.is_policy_checked -eq 0) {
+                [void]$findings.Add([PSCustomObject]@{
+                    Finding      = 'sa account has no password policy'
+                    Severity     = 'Warning'
+                    CurrentValue = 'Policy not enforced'
+                    Detail       = 'The sa login does not enforce Windows password complexity policy.'
+                    Remediation  = 'ALTER LOGIN [sa] WITH CHECK_POLICY = ON;'
+                })
+            }
+            if ($saInfo.is_expiration_checked -eq 0) {
+                [void]$findings.Add([PSCustomObject]@{
+                    Finding      = 'sa account password never expires'
+                    Severity     = 'Warning'
+                    CurrentValue = 'Expiration not enforced'
+                    Detail       = 'The sa login password has no expiration. Stale credentials increase risk.'
+                    Remediation  = 'ALTER LOGIN [sa] WITH CHECK_EXPIRATION = ON;'
+                })
+            }
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - sa account check failed: $_" -Level Warning
+    }
+
+    # --- Check 4: Excessive sysadmins ---
+    try {
+        $sysadminCount = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT COUNT(*) AS SysadminCount
+FROM sys.server_role_members srm
+JOIN sys.server_principals sp ON srm.member_principal_id = sp.principal_id
+WHERE srm.role_principal_id = (
+    SELECT principal_id FROM sys.server_principals WHERE name = 'sysadmin'
+)
+AND sp.name NOT LIKE '##%'
+"@
+        if ($sysadminCount -and $sysadminCount.SysadminCount -gt 3) {
+            [void]$findings.Add([PSCustomObject]@{
+                Finding      = 'Excessive sysadmin role members'
+                Severity     = 'Warning'
+                CurrentValue = "$($sysadminCount.SysadminCount) members"
+                Detail       = 'Too many accounts with sysadmin privileges increases risk. Follow principle of least privilege.'
+                Remediation  = 'Review sysadmin members and remove unnecessary accounts. Use granular server roles instead.'
+            })
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - sysadmin count check failed: $_" -Level Warning
+    }
+
+    # --- Check 5: TRUSTWORTHY databases ---
+    try {
+        $trustworthy = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT name AS DatabaseName
+FROM sys.databases
+WHERE is_trustworthy_on = 1 AND database_id > 4
+"@
+        if ($trustworthy) {
+            $dbNames = @($trustworthy) | ForEach-Object { $_.DatabaseName }
+            [void]$findings.Add([PSCustomObject]@{
+                Finding      = 'TRUSTWORTHY databases found'
+                Severity     = 'Critical'
+                CurrentValue = ($dbNames -join ', ')
+                Detail       = 'TRUSTWORTHY allows database code to access resources outside the database. Combined with db_owner, this enables privilege escalation to sysadmin.'
+                Remediation  = 'ALTER DATABASE [dbname] SET TRUSTWORTHY OFF;'
+            })
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - TRUSTWORTHY check failed: $_" -Level Warning
+    }
+
+    # --- Check 6: Guest access in user databases ---
+    try {
+        $guestAccess = Invoke-RemoteSQLQuery @queryParams -Query @"
+DECLARE @results TABLE (DatabaseName SYSNAME)
+DECLARE @sql NVARCHAR(MAX) = ''
+SELECT @sql = @sql + 'USE ' + QUOTENAME(name) + '; IF EXISTS (SELECT 1 FROM sys.database_permissions p JOIN sys.database_principals dp ON p.grantee_principal_id = dp.principal_id WHERE dp.name = ''guest'' AND p.permission_name = ''CONNECT'' AND p.state_desc = ''GRANT'' AND p.class = 0) INSERT @results VALUES (''' + REPLACE(name, '''', '''''') + '''); '
+FROM sys.databases WHERE database_id > 4 AND state = 0
+EXEC sp_executesql @sql
+SELECT DatabaseName FROM @results
+"@
+        if ($guestAccess) {
+            $dbNames = @($guestAccess) | ForEach-Object { $_.DatabaseName }
+            [void]$findings.Add([PSCustomObject]@{
+                Finding      = 'Guest user has CONNECT access'
+                Severity     = 'Warning'
+                CurrentValue = ($dbNames -join ', ')
+                Detail       = 'The guest user can connect to these databases. Any authenticated login can access data without an explicit user mapping.'
+                Remediation  = 'USE [dbname]; REVOKE CONNECT FROM guest;'
+            })
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - guest access check failed: $_" -Level Warning
+    }
+
+    # --- Check 7: BUILTIN\Administrators login ---
+    try {
+        $builtinAdmin = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT name FROM sys.server_principals
+WHERE name = 'BUILTIN\Administrators' AND type = 'G'
+"@
+        if ($builtinAdmin) {
+            [void]$findings.Add([PSCustomObject]@{
+                Finding      = 'BUILTIN\Administrators login exists'
+                Severity     = 'Critical'
+                CurrentValue = 'Present'
+                Detail       = 'All local Administrators have sysadmin access to SQL Server. Any local admin compromise gives full database control.'
+                Remediation  = 'DROP LOGIN [BUILTIN\Administrators]; -- Grant specific AD groups instead'
+            })
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - BUILTIN Admins check failed: $_" -Level Warning
+    }
+
+    # --- Check 8: Public server permissions beyond defaults ---
+    try {
+        $publicPerms = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT permission_name AS PermissionName
+FROM sys.server_permissions
+WHERE grantee_principal_id = 0
+AND permission_name NOT IN ('CONNECT SQL', 'VIEW ANY DATABASE')
+AND state_desc = 'GRANT'
+"@
+        if ($publicPerms) {
+            $permNames = @($publicPerms) | ForEach-Object { $_.PermissionName }
+            [void]$findings.Add([PSCustomObject]@{
+                Finding      = 'Public role has extra server permissions'
+                Severity     = 'Warning'
+                CurrentValue = ($permNames -join ', ')
+                Detail       = 'The public server role has permissions beyond defaults. All logins inherit these permissions.'
+                Remediation  = 'REVOKE <permission> FROM public;'
+            })
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - public permissions check failed: $_" -Level Warning
+    }
+
+    # --- Check 9: Orphaned users ---
+    try {
+        $orphaned = Invoke-RemoteSQLQuery @queryParams -Query @"
+DECLARE @results TABLE (UserName SYSNAME, DatabaseName SYSNAME)
+DECLARE @sql NVARCHAR(MAX) = ''
+SELECT @sql = @sql + 'USE ' + QUOTENAME(name) + '; INSERT @results SELECT dp.name, DB_NAME() FROM sys.database_principals dp LEFT JOIN sys.server_principals sp ON dp.sid = sp.sid WHERE dp.type IN (''S'',''U'') AND dp.name NOT IN (''dbo'',''guest'',''INFORMATION_SCHEMA'',''sys'') AND dp.name NOT LIKE ''##%'' AND sp.sid IS NULL AND dp.authentication_type <> 0; '
+FROM sys.databases WHERE database_id > 4 AND state = 0
+EXEC sp_executesql @sql
+SELECT UserName, DatabaseName FROM @results
+"@
+        if ($orphaned) {
+            $userNames = @($orphaned) | ForEach-Object { $_.UserName }
+            $uniqueNames = $userNames | Select-Object -Unique
+            [void]$findings.Add([PSCustomObject]@{
+                Finding      = 'Orphaned database users found'
+                Severity     = 'Warning'
+                CurrentValue = "$($uniqueNames.Count) orphaned user(s)"
+                Detail       = "Users with no matching server login: $($uniqueNames -join ', ')"
+                Remediation  = 'DROP USER [username]; -- or remap: ALTER USER [username] WITH LOGIN = [loginname];'
+            })
+        }
+    }
+    catch {
+        # Orphaned user check may fail on some databases, not critical
+        Write-Log "    Security assessment - orphaned users check failed: $_" -Level Warning
+    }
+
+    # --- Check 10: SQL logins without password policy ---
+    try {
+        $weakLogins = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT name AS LoginName
+FROM sys.sql_logins
+WHERE is_policy_checked = 0
+AND name NOT LIKE '##%'
+AND name <> 'sa'
+AND is_disabled = 0
+"@
+        if ($weakLogins) {
+            $loginNames = @($weakLogins) | ForEach-Object { $_.LoginName }
+            [void]$findings.Add([PSCustomObject]@{
+                Finding      = 'SQL logins without password policy'
+                Severity     = 'Warning'
+                CurrentValue = "$($loginNames.Count) login(s)"
+                Detail       = "Logins not enforcing password complexity: $($loginNames -join ', ')"
+                Remediation  = 'ALTER LOGIN [loginname] WITH CHECK_POLICY = ON;'
+            })
+        }
+    }
+    catch {
+        Write-Log "    Security assessment - weak login check failed: $_" -Level Warning
+    }
+
+    Write-Log "    Security assessment complete: $($findings.Count) finding(s)" -Level $(if ($findings.Count -eq 0) { "Success" } else { "Warning" })
+    return $findings
+}
+
 #endregion
 
 #region ==================== HTML REPORT GENERATION ====================
@@ -950,6 +1237,13 @@ function ConvertTo-HtmlTable {
             # Color coding for disabled items
             if ($prop -eq "IsDisabled" -and $val -eq "Yes") {
                 $cellClass = " class='status-warning'"
+            }
+
+            # Color coding for security assessment severity
+            if ($prop -eq "Severity") {
+                if ($val -eq "Critical") { $cellClass = " class='status-critical'" }
+                elseif ($val -eq "Warning") { $cellClass = " class='status-warning'" }
+                elseif ($val -eq "Info") { $cellClass = " class='status-ok'" }
             }
 
             $displayVal = if ($null -eq $val) { "" }
@@ -1202,6 +1496,14 @@ function New-ServerReport {
         ($InventoryData.Config.Settings | Where-Object { $_.ConfigName -eq "max server memory (MB)" }).ValueInUse
     } else { "N/A" }
 
+    # Security assessment counts
+    $secFindings = @($InventoryData.SecurityAssessment)
+    $secCritical = if ($InventoryData.SecurityAssessment) { @($secFindings | Where-Object { $_.Severity -eq 'Critical' }).Count } else { 0 }
+    $secWarning = if ($InventoryData.SecurityAssessment) { @($secFindings | Where-Object { $_.Severity -eq 'Warning' }).Count } else { 0 }
+    $secInfo = if ($InventoryData.SecurityAssessment) { @($secFindings | Where-Object { $_.Severity -eq 'Info' }).Count } else { 0 }
+    $secTotal = $secCritical + $secWarning + $secInfo
+    $secColor = if ($secCritical -gt 0) { '#dc3545' } elseif ($secWarning -gt 0) { '#ffc107' } else { '#28a745' }
+
     $html = [System.Text.StringBuilder]::new()
     [void]$html.AppendLine((Get-HtmlHeader))
     [void]$html.AppendLine("<title>SQL Inventory - $([System.Web.HttpUtility]::HtmlEncode($serverName))</title>")
@@ -1262,6 +1564,26 @@ function New-ServerReport {
             <div class="metric-card">
                 <div class="metric-value">$maxMemory</div>
                 <div class="metric-label">Max Memory (MB)</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" style="color: $secColor">$secTotal</div>
+                <div class="metric-label">Security Findings</div>
+            </div>
+        </div>
+"@)
+
+    # Section: Security Assessment
+    $secActiveClass = if ($secCritical -gt 0) { " active" } else { "" }
+    $secHeaderActive = if ($secCritical -gt 0) { " active" } else { "" }
+    $secSummaryText = if ($secTotal -eq 0) { "No issues found" } else { "$secCritical Critical, $secWarning Warning, $secInfo Info" }
+
+    [void]$html.AppendLine(@"
+        <div class="section">
+            <div class="section-header$secHeaderActive" onclick="toggleSection('sec-assessment')">
+                Security Assessment ($secSummaryText) <span class="toggle">&#9654;</span>
+            </div>
+            <div id="sec-assessment" class="section-content$secActiveClass">
+                $(ConvertTo-HtmlTable -Data $InventoryData.SecurityAssessment -Properties @('Finding','Severity','CurrentValue','Detail','Remediation') -EmptyMessage 'No security findings - all checks passed')
             </div>
         </div>
 "@)
@@ -1412,6 +1734,9 @@ function New-SummaryReport {
     $scanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $totalDatabases = ($ServerResults | ForEach-Object { if ($_.Databases) { ($_.Databases | Measure-Object).Count } else { 0 } } | Measure-Object -Sum).Sum
     $totalSizeGB = [math]::Round(($ServerResults | ForEach-Object { if ($_.Databases) { ($_.Databases | Measure-Object -Property TotalSizeMB -Sum).Sum } else { 0 } } | Measure-Object -Sum).Sum / 1024, 2)
+    $totalSecFindings = ($ServerResults | ForEach-Object { if ($_.SecurityAssessment) { @($_.SecurityAssessment).Count } else { 0 } } | Measure-Object -Sum).Sum
+    $totalSecCritical = ($ServerResults | ForEach-Object { if ($_.SecurityAssessment) { @($_.SecurityAssessment | Where-Object { $_.Severity -eq 'Critical' }).Count } else { 0 } } | Measure-Object -Sum).Sum
+    $summarySecColor = if ($totalSecCritical -gt 0) { '#dc3545' } elseif ($totalSecFindings -gt 0) { '#ffc107' } else { '#28a745' }
 
     $html = [System.Text.StringBuilder]::new()
     [void]$html.AppendLine((Get-HtmlHeader))
@@ -1461,6 +1786,10 @@ function New-SummaryReport {
                 <div class="metric-value">$($FailedServers.Count)</div>
                 <div class="metric-label">Failed / Skipped</div>
             </div>
+            <div class="metric-card">
+                <div class="metric-value" style="color: $summarySecColor">$totalSecFindings</div>
+                <div class="metric-label">Security Findings</div>
+            </div>
         </div>
 "@)
 
@@ -1483,14 +1812,21 @@ function New-SummaryReport {
         $srvVersion = if ($props) { $props.ProductVersion } else { "N/A" }
         $srvEdition = if ($props) { $props.Edition } else { "N/A" }
 
+        $srvSecCritical = if ($srv.SecurityAssessment) { @($srv.SecurityAssessment | Where-Object { $_.Severity -eq 'Critical' }).Count } else { 0 }
+        $srvSecWarning = if ($srv.SecurityAssessment) { @($srv.SecurityAssessment | Where-Object { $_.Severity -eq 'Warning' }).Count } else { 0 }
+        $srvSecStatus = if ($srvSecCritical -gt 0) { "$srvSecCritical Critical" }
+                        elseif ($srvSecWarning -gt 0) { "$srvSecWarning Warning" }
+                        else { "Clean" }
+
         [PSCustomObject]@{
-            Server       = $srv.Computer
-            Version      = $srvVersion
-            Edition      = $srvEdition
-            Databases    = $dbCount
-            "Size (GB)"  = $sizeGB
-            BackupHealth = $backupHealth
-            ReportFile   = $srv.ReportFile
+            Server         = $srv.Computer
+            Version        = $srvVersion
+            Edition        = $srvEdition
+            Databases      = $dbCount
+            "Size (GB)"    = $sizeGB
+            BackupHealth   = $backupHealth
+            SecurityStatus = $srvSecStatus
+            ReportFile     = $srv.ReportFile
         }
     }
 
@@ -1504,7 +1840,7 @@ function New-SummaryReport {
                 <table>
                     <thead><tr>
                         <th>Server</th><th>Version</th><th>Edition</th>
-                        <th>Databases</th><th>Size (GB)</th><th>Backup Health</th><th>Report</th>
+                        <th>Databases</th><th>Size (GB)</th><th>Backup Health</th><th>Security</th><th>Report</th>
                     </tr></thead>
                     <tbody>
 "@)
@@ -1516,6 +1852,9 @@ function New-SummaryReport {
             "Critical" { "status-critical" }
             default    { "status-warning" }
         }
+        $secClass = if ($row.SecurityStatus -match 'Critical') { "status-critical" }
+                    elseif ($row.SecurityStatus -match 'Warning') { "status-warning" }
+                    else { "status-ok" }
         $reportLink = if ($row.ReportFile) {
             $fileName = Split-Path $row.ReportFile -Leaf
             "<a href='$([System.Web.HttpUtility]::HtmlEncode($fileName))'>View Report</a>"
@@ -1529,6 +1868,7 @@ function New-SummaryReport {
                         <td>$($row.Databases)</td>
                         <td>$($row.'Size (GB)')</td>
                         <td class='$healthClass'>$($row.BackupHealth)</td>
+                        <td class='$secClass'>$($row.SecurityStatus)</td>
                         <td>$reportLink</td>
                     </tr>
 "@)
@@ -1662,9 +2002,10 @@ function Invoke-DBExplorer {
             Backups          = $null
             Security         = $null
             DatabaseSecurity = @{}
-            AgentJobs        = $null
-            Errors           = [System.Collections.ArrayList]::new()
-            ReportFile       = $null
+            AgentJobs          = $null
+            SecurityAssessment = $null
+            Errors             = [System.Collections.ArrayList]::new()
+            ReportFile         = $null
         }
 
         # Test WinRM access
@@ -1787,6 +2128,17 @@ function Invoke-DBExplorer {
             }
             catch {
                 $errMsg = "Agent jobs collection failed: $_"
+                Write-Log "    $errMsg" -Level Warning
+                [void]$inventoryData.Errors.Add($errMsg)
+            }
+
+            # Security Assessment
+            Write-Log "    Running security assessment..."
+            try {
+                $inventoryData.SecurityAssessment = Get-SQLSecurityAssessment @queryBaseParams
+            }
+            catch {
+                $errMsg = "Security assessment failed: $_"
                 Write-Log "    $errMsg" -Level Warning
                 [void]$inventoryData.Errors.Add($errMsg)
             }
