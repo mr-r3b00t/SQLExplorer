@@ -1179,6 +1179,817 @@ AND is_disabled = 0
     return $findings
 }
 
+function Get-SQLKillChainAssessment {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Computer,
+
+        [Parameter(Mandatory)]
+        [string]$InstanceName,
+
+        [System.Management.Automation.PSCredential]$WinCredential,
+
+        [array]$SecurityFindings,
+
+        [hashtable]$ServerConfig,
+
+        [hashtable]$ServerSecurity,
+
+        [hashtable]$DatabaseSecurity,
+
+        [array]$AgentJobs
+    )
+
+    $attackPaths = [System.Collections.ArrayList]::new()
+    $queryParams = @{
+        Computer     = $Computer
+        InstanceName = $InstanceName
+    }
+    if ($WinCredential) { $queryParams.WinCredential = $WinCredential }
+
+    # ================================================================
+    # Collect additional data not in existing inventory
+    # ================================================================
+
+    # Query 1: Linked Servers
+    $linkedServers = $null
+    try {
+        $linkedServers = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT
+    s.server_id,
+    s.name AS LinkedServerName,
+    s.product AS Product,
+    s.provider AS Provider,
+    s.data_source AS DataSource,
+    CASE WHEN s.is_rpc_out_enabled = 1 THEN 'Yes' ELSE 'No' END AS RpcOutEnabled,
+    CASE WHEN s.is_data_access_enabled = 1 THEN 'Yes' ELSE 'No' END AS DataAccessEnabled,
+    CASE WHEN ll.uses_self_credential = 1 THEN 'Yes' ELSE 'No' END AS UsesSelfCredential,
+    ll.remote_name AS RemoteLoginName,
+    ISNULL(sp.name, '** All logins **') AS LocalLogin
+FROM sys.servers s
+LEFT JOIN sys.linked_logins ll ON s.server_id = ll.server_id
+LEFT JOIN sys.server_principals sp ON ll.local_principal_id = sp.principal_id
+WHERE s.server_id > 0
+ORDER BY s.name
+"@
+    }
+    catch {
+        Write-Log "    Kill chain - linked server query failed: $_" -Level Warning
+    }
+
+    # Query 2: Agent Job Steps (dangerous types)
+    $dangerousJobSteps = $null
+    try {
+        $dangerousJobSteps = Invoke-RemoteSQLQuery @queryParams -Database "msdb" -Query @"
+SELECT
+    j.name AS JobName,
+    CASE WHEN j.enabled = 1 THEN 'Yes' ELSE 'No' END AS JobEnabled,
+    SUSER_SNAME(j.owner_sid) AS JobOwner,
+    js.step_id AS StepID,
+    js.step_name AS StepName,
+    js.subsystem AS StepType,
+    LEFT(js.command, 500) AS StepCommand,
+    js.proxy_id AS ProxyID
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.sysjobsteps js ON j.job_id = js.job_id
+WHERE js.subsystem IN ('CmdExec', 'PowerShell', 'SSIS', 'ActiveScripting')
+   OR js.command LIKE '%xp_cmdshell%'
+   OR js.command LIKE '%sp_OACreate%'
+ORDER BY j.name, js.step_id
+"@
+    }
+    catch {
+        Write-Log "    Kill chain - agent job steps query failed: $_" -Level Warning
+    }
+
+    # Query 3: Server-Level Impersonation Permissions
+    $impersonationPerms = $null
+    try {
+        $impersonationPerms = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT
+    grantee.name AS GranteeName,
+    grantee.type_desc AS GranteeType,
+    grantor.name AS ImpersonateTarget,
+    perm.state_desc AS PermState,
+    CASE WHEN EXISTS (
+        SELECT 1 FROM sys.server_role_members srm
+        JOIN sys.server_principals sr ON srm.role_principal_id = sr.principal_id
+        WHERE srm.member_principal_id = grantor.principal_id
+        AND sr.name = 'sysadmin'
+    ) THEN 'Yes' ELSE 'No' END AS TargetIsSysadmin
+FROM sys.server_permissions perm
+JOIN sys.server_principals grantee ON perm.grantee_principal_id = grantee.principal_id
+JOIN sys.server_principals grantor ON perm.major_id = grantor.principal_id
+WHERE perm.permission_name = 'IMPERSONATE'
+AND perm.class_desc = 'SERVER_PRINCIPAL'
+AND perm.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
+"@
+    }
+    catch {
+        Write-Log "    Kill chain - impersonation query failed: $_" -Level Warning
+    }
+
+    # Query 4: Startup Procedures
+    $startupProcs = $null
+    try {
+        $startupProcs = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT
+    OBJECT_SCHEMA_NAME(object_id) AS SchemaName,
+    name AS ProcedureName,
+    create_date AS CreateDate,
+    modify_date AS ModifyDate
+FROM sys.procedures
+WHERE OBJECTPROPERTY(object_id, 'ExecIsStartup') = 1
+"@
+    }
+    catch {
+        Write-Log "    Kill chain - startup procedures query failed: $_" -Level Warning
+    }
+
+    # Query 5: EXECUTE AS Procedures across databases
+    $executeAsProcs = $null
+    try {
+        $executeAsProcs = Invoke-RemoteSQLQuery @queryParams -Query @"
+DECLARE @results TABLE (DatabaseName SYSNAME, SchemaName NVARCHAR(128), ProcName SYSNAME, ExecuteAs NVARCHAR(256))
+DECLARE @sql NVARCHAR(MAX) = ''
+SELECT @sql = @sql + 'USE ' + QUOTENAME(name) + ';
+INSERT @results
+SELECT DB_NAME(), SCHEMA_NAME(p.schema_id), p.name,
+    CASE p.execute_as_principal_id
+        WHEN -2 THEN ''OWNER''
+        ELSE ISNULL(USER_NAME(p.execute_as_principal_id), ''Unknown'')
+    END
+FROM sys.procedures p
+WHERE p.execute_as_principal_id IS NOT NULL AND p.execute_as_principal_id <> 0; '
+FROM sys.databases WHERE database_id > 4 AND state = 0
+EXEC sp_executesql @sql
+SELECT DatabaseName, SchemaName, ProcName, ExecuteAs FROM @results
+"@
+    }
+    catch {
+        Write-Log "    Kill chain - EXECUTE AS procedures query failed: $_" -Level Warning
+    }
+
+    # Query 6: Server Triggers
+    $serverTriggers = $null
+    try {
+        $serverTriggers = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT
+    name AS TriggerName,
+    type_desc AS TriggerType,
+    parent_class_desc AS TriggerScope,
+    CASE WHEN is_disabled = 1 THEN 'Yes' ELSE 'No' END AS IsDisabled,
+    create_date AS CreateDate
+FROM sys.server_triggers
+WHERE is_disabled = 0
+"@
+    }
+    catch {
+        Write-Log "    Kill chain - server triggers query failed: $_" -Level Warning
+    }
+
+    # Query 7: Database-Scoped Credentials
+    $dbScopedCreds = $null
+    try {
+        $dbScopedCreds = Invoke-RemoteSQLQuery @queryParams -Query @"
+DECLARE @results TABLE (DatabaseName SYSNAME, CredentialName SYSNAME, CredentialIdentity NVARCHAR(256))
+DECLARE @sql NVARCHAR(MAX) = ''
+SELECT @sql = @sql + 'USE ' + QUOTENAME(name) + ';
+IF EXISTS (SELECT 1 FROM sys.all_objects WHERE name = ''database_scoped_credentials'' AND type = ''V'')
+INSERT @results SELECT DB_NAME(), name, credential_identity FROM sys.database_scoped_credentials; '
+FROM sys.databases WHERE database_id > 4 AND state = 0
+EXEC sp_executesql @sql
+SELECT DatabaseName, CredentialName, CredentialIdentity FROM @results
+"@
+    }
+    catch {
+        Write-Log "    Kill chain - database-scoped credentials query failed: $_" -Level Warning
+    }
+
+    # Query 8: xp_cmdshell EXECUTE Permissions (who can run it beyond sysadmins)
+    $xpCmdShellPerms = $null
+    try {
+        $xpCmdShellPerms = Invoke-RemoteSQLQuery @queryParams -Query @"
+SELECT
+    sp.name AS PrincipalName,
+    sp.type_desc AS PrincipalType,
+    pe.permission_name AS Permission,
+    pe.state_desc AS PermState
+FROM sys.server_permissions pe
+JOIN sys.server_principals sp ON pe.grantee_principal_id = sp.principal_id
+WHERE pe.class_desc = 'OBJECT_OR_COLUMN'
+AND OBJECT_NAME(pe.major_id) = 'xp_cmdshell'
+AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
+"@
+    }
+    catch {
+        Write-Log "    Kill chain - xp_cmdshell permissions query failed: $_" -Level Warning
+    }
+
+    # ================================================================
+    # Extract data from existing inventory for cross-referencing
+    # ================================================================
+
+    # Helper: check if a security finding exists by substring match
+    $hasSecFinding = {
+        param([string]$Pattern)
+        if (-not $SecurityFindings) { return $false }
+        $match = @($SecurityFindings | Where-Object { $_.Finding -match $Pattern })
+        return ($match.Count -gt 0)
+    }
+
+    # Config-based findings
+    $xpCmdShellEnabled = (& $hasSecFinding 'xp_cmdshell')
+    $clrEnabled = (& $hasSecFinding 'CLR')
+    $oleEnabled = (& $hasSecFinding 'OLE Automation')
+    $adHocEnabled = (& $hasSecFinding 'Ad Hoc Distributed')
+    $dbMailEnabled = (& $hasSecFinding 'Database Mail')
+    $crossDbChaining = (& $hasSecFinding 'Cross.?[Dd]atabase [Oo]wnership')
+    $startupProcsScan = (& $hasSecFinding '[Ss]tartup [Pp]roc')
+    $mixedMode = (& $hasSecFinding '[Mm]ixed.*[Aa]uth')
+    $saEnabled = (& $hasSecFinding 'sa account.*enabled')
+    $saNoPolicy = (& $hasSecFinding 'sa.*password policy')
+    $trustworthyDbs = (& $hasSecFinding 'TRUSTWORTHY')
+    $builtinAdmins = (& $hasSecFinding 'BUILTIN')
+
+    # Sysadmin logins from server security data
+    $sysadminLogins = @()
+    if ($ServerSecurity -and $ServerSecurity.Logins) {
+        $sysadminLogins = @($ServerSecurity.Logins | Where-Object { $_.ServerRoles -match 'sysadmin' })
+    }
+    $sysadminCount = $sysadminLogins.Count
+
+    # Service account info
+    $serviceAccount = "Unknown"
+    $highPrivService = $false
+    if ($ServerConfig -and $ServerConfig.Services) {
+        $sqlSvc = $ServerConfig.Services | Where-Object { $_.servicename -match 'SQL Server \(' } | Select-Object -First 1
+        if ($sqlSvc) {
+            $serviceAccount = $sqlSvc.service_account
+            $highPrivPatterns = @('LocalSystem', 'NT AUTHORITY\\SYSTEM', 'SYSTEM')
+            foreach ($pattern in $highPrivPatterns) {
+                if ($serviceAccount -match [regex]::Escape($pattern)) { $highPrivService = $true; break }
+            }
+            # Also check for domain admin patterns (contains \, not a service account pattern)
+            if ($serviceAccount -match '\\' -and $serviceAccount -notmatch 'NT SERVICE' -and $serviceAccount -notmatch 'NT AUTHORITY\\(NETWORK SERVICE|LOCAL SERVICE)') {
+                # Could be a domain account - flag as potentially high privilege
+                $highPrivService = $true
+            }
+        }
+    }
+
+    # SQL Agent service status
+    $agentRunning = $false
+    if ($ServerConfig -and $ServerConfig.Services) {
+        $agentSvc = $ServerConfig.Services | Where-Object { $_.servicename -match 'SQL Server Agent' } | Select-Object -First 1
+        if ($agentSvc -and $agentSvc.status_desc -eq 'Running') { $agentRunning = $true }
+    }
+
+    # db_owner role holders in TRUSTWORTHY databases
+    $trustworthyDbOwners = @()
+    if ($trustworthyDbs -and $SecurityFindings -and $DatabaseSecurity) {
+        $twFinding = $SecurityFindings | Where-Object { $_.Finding -match 'TRUSTWORTHY' } | Select-Object -First 1
+        if ($twFinding -and $twFinding.Detail) {
+            # Extract database names from the detail text
+            $twDbNames = @($twFinding.Detail -split ',' | ForEach-Object { $_.Trim() })
+            foreach ($twDb in $twDbNames) {
+                if ($DatabaseSecurity.ContainsKey($twDb) -and $DatabaseSecurity[$twDb].Users) {
+                    $dbOwnerUsers = @($DatabaseSecurity[$twDb].Users | Where-Object { $_.DatabaseRoles -match 'db_owner' })
+                    foreach ($dbo in $dbOwnerUsers) {
+                        $isSysadmin = $false
+                        foreach ($sa in $sysadminLogins) {
+                            if ($sa.LoginName -eq $dbo.UserName -or $sa.LoginName -eq $dbo.LinkedLogin) {
+                                $isSysadmin = $true
+                                break
+                            }
+                        }
+                        if (-not $isSysadmin) {
+                            $trustworthyDbOwners += [PSCustomObject]@{
+                                Database = $twDb
+                                User     = $dbo.UserName
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    # ================================================================
+    # Evaluate 16 Attack Paths
+    # ================================================================
+
+    # ---- EXECUTION PHASE ----
+
+    # Attack Path 1: xp_cmdshell RCE
+    $ap1Status = "Mitigated"
+    $ap1State = "xp_cmdshell: Disabled"
+    $ap1Prereqs = "xp_cmdshell enabled + sysadmin role or explicit EXECUTE permission"
+    if ($xpCmdShellEnabled) {
+        $ap1State = "xp_cmdshell: Enabled"
+        $xpExecCount = if ($xpCmdShellPerms) { @($xpCmdShellPerms).Count } else { 0 }
+        if ($sysadminCount -gt 0 -or $xpExecCount -gt 0) {
+            $ap1Status = "Exploitable"
+            $ap1State += "; $sysadminCount sysadmin(s)"
+            if ($xpExecCount -gt 0) { $ap1State += "; $xpExecCount explicit EXECUTE grant(s)" }
+        }
+        else {
+            $ap1Status = "Partially Exploitable"
+            $ap1State += "; No accessible sysadmin or EXECUTE perms found"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "xp_cmdshell Remote Code Execution"
+        KillChainPhase = "Execution"
+        Exploitability = $ap1Status
+        Prerequisites  = $ap1Prereqs
+        CurrentState   = $ap1State
+        Impact         = "Execute arbitrary OS commands on the SQL Server host as the SQL service account ($serviceAccount)"
+        Remediation    = "EXEC sp_configure 'show advanced options', 1; RECONFIGURE; EXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;"
+    })
+
+    # Attack Path 2: OLE Automation RCE
+    $ap2Status = "Mitigated"
+    $ap2State = "OLE Automation: Disabled"
+    $ap2Prereqs = "OLE Automation Procedures enabled + sysadmin role"
+    if ($oleEnabled) {
+        $ap2State = "OLE Automation: Enabled"
+        if ($sysadminCount -gt 1) {
+            $ap2Status = "Exploitable"
+            $ap2State += "; $sysadminCount sysadmin(s) can use sp_OACreate/sp_OAMethod"
+        }
+        elseif ($sysadminCount -eq 1) {
+            $ap2Status = "Partially Exploitable"
+            $ap2State += "; Only default sa/sysadmin (limited exposure)"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "OLE Automation Procedures RCE"
+        KillChainPhase = "Execution"
+        Exploitability = $ap2Status
+        Prerequisites  = $ap2Prereqs
+        CurrentState   = $ap2State
+        Impact         = "Execute OS commands via sp_OACreate/sp_OAMethod (file system, WScript.Shell, network access)"
+        Remediation    = "EXEC sp_configure 'Ole Automation Procedures', 0; RECONFIGURE;"
+    })
+
+    # Attack Path 3: CLR Assembly Execution
+    $ap3Status = "Mitigated"
+    $ap3State = "CLR: Disabled"
+    $ap3Prereqs = "CLR enabled + TRUSTWORTHY database + db_owner role in that database"
+    if ($clrEnabled) {
+        $ap3State = "CLR: Enabled"
+        if ($trustworthyDbs -and $trustworthyDbOwners.Count -gt 0) {
+            $ap3Status = "Exploitable"
+            $dbList = ($trustworthyDbOwners | ForEach-Object { "$($_.Database):$($_.User)" }) -join ', '
+            $ap3State += "; TRUSTWORTHY db_owner(s): $dbList"
+        }
+        elseif ($trustworthyDbs) {
+            $ap3Status = "Partially Exploitable"
+            $ap3State += "; TRUSTWORTHY DBs exist but no non-sysadmin db_owner found"
+        }
+        else {
+            $ap3Status = "Partially Exploitable"
+            $ap3State += "; No TRUSTWORTHY databases (needs sysadmin to load assemblies)"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "CLR Assembly Code Execution"
+        KillChainPhase = "Execution"
+        Exploitability = $ap3Status
+        Prerequisites  = $ap3Prereqs
+        CurrentState   = $ap3State
+        Impact         = "Load and execute arbitrary .NET code inside SQL Server process (full RCE)"
+        Remediation    = "EXEC sp_configure 'clr enabled', 0; RECONFIGURE; ALTER DATABASE [db] SET TRUSTWORTHY OFF;"
+    })
+
+    # Attack Path 4: Agent Job Command Execution
+    $ap4Status = "Mitigated"
+    $ap4State = "No dangerous job steps found"
+    $ap4Prereqs = "SQL Agent running + CmdExec/PowerShell job steps + sysadmin-owned jobs"
+    $dangerousStepCount = if ($dangerousJobSteps) { @($dangerousJobSteps).Count } else { 0 }
+    if ($dangerousStepCount -gt 0) {
+        $sysadminOwned = @($dangerousJobSteps | Where-Object {
+            $owner = $_.JobOwner
+            $isSa = $false
+            foreach ($sa in $sysadminLogins) { if ($sa.LoginName -eq $owner) { $isSa = $true; break } }
+            $isSa
+        })
+        if ($sysadminOwned.Count -gt 0 -and $agentRunning) {
+            $ap4Status = "Exploitable"
+            $jobNames = ($sysadminOwned | Select-Object -ExpandProperty JobName -Unique) -join ', '
+            $ap4State = "$($sysadminOwned.Count) dangerous step(s) in sysadmin-owned jobs: $jobNames"
+        }
+        elseif ($agentRunning) {
+            $ap4Status = "Partially Exploitable"
+            $ap4State = "$dangerousStepCount dangerous step(s) found but not owned by sysadmin"
+        }
+        else {
+            $ap4Status = "Partially Exploitable"
+            $ap4State = "$dangerousStepCount dangerous step(s) found but SQL Agent not running"
+        }
+    }
+    elseif ($agentRunning -and $sysadminCount -gt 1) {
+        $ap4Status = "Partially Exploitable"
+        $ap4State = "No dangerous steps yet but Agent running + $sysadminCount sysadmins could create them"
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "SQL Agent Job Command Execution"
+        KillChainPhase = "Execution"
+        Exploitability = $ap4Status
+        Prerequisites  = $ap4Prereqs
+        CurrentState   = $ap4State
+        Impact         = "Execute OS commands (CmdExec/PowerShell) via SQL Agent as the Agent service account"
+        Remediation    = "Review and remove CmdExec/PowerShell job steps; restrict SQLAgentOperatorRole membership; use proxy accounts with least privilege"
+    })
+
+    # ---- PRIVILEGE ESCALATION PHASE ----
+
+    # Attack Path 5: TRUSTWORTHY db_owner to sysadmin
+    $ap5Status = "Mitigated"
+    $ap5State = "No TRUSTWORTHY user databases"
+    $ap5Prereqs = "TRUSTWORTHY database + non-sysadmin user with db_owner role"
+    if ($trustworthyDbs) {
+        if ($trustworthyDbOwners.Count -gt 0) {
+            $ap5Status = "Exploitable"
+            $dbList = ($trustworthyDbOwners | ForEach-Object { "$($_.Database) ($($_.User))" }) -join ', '
+            $ap5State = "TRUSTWORTHY with non-sysadmin db_owner: $dbList"
+        }
+        else {
+            $ap5Status = "Partially Exploitable"
+            $ap5State = "TRUSTWORTHY databases exist but all db_owners are already sysadmin"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "TRUSTWORTHY Database Privilege Escalation"
+        KillChainPhase = "Privilege Escalation"
+        Exploitability = $ap5Status
+        Prerequisites  = $ap5Prereqs
+        CurrentState   = $ap5State
+        Impact         = "db_owner can create a stored procedure or CLR assembly that runs as sysadmin, gaining full server control"
+        Remediation    = "ALTER DATABASE [db] SET TRUSTWORTHY OFF; Review db_owner role membership"
+    })
+
+    # Attack Path 6: Impersonation to sysadmin
+    $ap6Status = "Mitigated"
+    $ap6State = "No IMPERSONATE permissions found"
+    $ap6Prereqs = "IMPERSONATE permission on a sysadmin login"
+    $impCount = if ($impersonationPerms) { @($impersonationPerms).Count } else { 0 }
+    if ($impCount -gt 0) {
+        $sysadminTargets = @($impersonationPerms | Where-Object { $_.TargetIsSysadmin -eq 'Yes' })
+        if ($sysadminTargets.Count -gt 0) {
+            $ap6Status = "Exploitable"
+            $details = ($sysadminTargets | ForEach-Object { "$($_.GranteeName) can impersonate $($_.ImpersonateTarget)" }) -join '; '
+            $ap6State = "$($sysadminTargets.Count) impersonation path(s) to sysadmin: $details"
+        }
+        else {
+            $ap6Status = "Partially Exploitable"
+            $ap6State = "$impCount IMPERSONATE permission(s) but none target sysadmin logins"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Login Impersonation to Sysadmin"
+        KillChainPhase = "Privilege Escalation"
+        Exploitability = $ap6Status
+        Prerequisites  = $ap6Prereqs
+        CurrentState   = $ap6State
+        Impact         = "EXECUTE AS LOGIN allows full sysadmin access without knowing the target password"
+        Remediation    = "REVOKE IMPERSONATE ON LOGIN::[target] FROM [grantee]; Review all IMPERSONATE grants"
+    })
+
+    # Attack Path 7: Service Account Exploitation
+    $ap7Status = "Mitigated"
+    $ap7State = "Service account: $serviceAccount"
+    $ap7Prereqs = "SQL service running as high-privilege account + code execution capability (xp_cmdshell/CLR)"
+    if ($highPrivService) {
+        if ($xpCmdShellEnabled -or $clrEnabled) {
+            $ap7Status = "Exploitable"
+            $execMethod = if ($xpCmdShellEnabled -and $clrEnabled) { "xp_cmdshell AND CLR" }
+                          elseif ($xpCmdShellEnabled) { "xp_cmdshell" }
+                          else { "CLR" }
+            $ap7State = "High-privilege service ($serviceAccount) + $execMethod enabled"
+        }
+        else {
+            $ap7Status = "Partially Exploitable"
+            $ap7State = "High-privilege service ($serviceAccount) but no code execution path enabled"
+        }
+    }
+    else {
+        $ap7State = "Low-privilege service account ($serviceAccount)"
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Service Account Exploitation"
+        KillChainPhase = "Privilege Escalation"
+        Exploitability = $ap7Status
+        Prerequisites  = $ap7Prereqs
+        CurrentState   = $ap7State
+        Impact         = "OS commands run as the SQL service account; if high-privilege, full domain/host compromise"
+        Remediation    = "Run SQL Server under a low-privilege managed service account (gMSA or virtual account); disable xp_cmdshell and CLR"
+    })
+
+    # Attack Path 8: Ownership Chaining
+    $ap8Status = "Mitigated"
+    $ap8State = "Cross-DB ownership chaining: Disabled"
+    $ap8Prereqs = "Cross-database ownership chaining enabled + EXECUTE AS OWNER stored procedures"
+    $execAsCount = if ($executeAsProcs) { @($executeAsProcs).Count } else { 0 }
+    if ($crossDbChaining) {
+        $ap8State = "Cross-DB ownership chaining: Enabled"
+        if ($execAsCount -gt 0) {
+            $ownerProcs = @($executeAsProcs | Where-Object { $_.ExecuteAs -eq 'OWNER' })
+            if ($ownerProcs.Count -gt 0) {
+                $ap8Status = "Exploitable"
+                $procList = ($ownerProcs | ForEach-Object { "$($_.DatabaseName).$($_.SchemaName).$($_.ProcName)" }) -join ', '
+                $ap8State += "; $($ownerProcs.Count) EXECUTE AS OWNER proc(s): $procList"
+            }
+            else {
+                $ap8Status = "Partially Exploitable"
+                $ap8State += "; $execAsCount EXECUTE AS proc(s) found but none use OWNER context"
+            }
+        }
+        else {
+            $ap8Status = "Partially Exploitable"
+            $ap8State += "; No EXECUTE AS procedures found (chaining still a risk)"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Cross-Database Ownership Chaining"
+        KillChainPhase = "Privilege Escalation"
+        Exploitability = $ap8Status
+        Prerequisites  = $ap8Prereqs
+        CurrentState   = $ap8State
+        Impact         = "Bypass database-level permission checks; access objects across databases without explicit grants"
+        Remediation    = "EXEC sp_configure 'cross db ownership chaining', 0; RECONFIGURE; Review EXECUTE AS OWNER procedures"
+    })
+
+    # ---- LATERAL MOVEMENT PHASE ----
+
+    # Attack Path 9: Linked Server Pivot
+    $ap9Status = "Mitigated"
+    $ap9State = "No linked servers configured"
+    $ap9Prereqs = "Linked servers with RPC out enabled + saved credentials or self-credential passthrough"
+    $linkedCount = if ($linkedServers) { @($linkedServers).Count } else { 0 }
+    if ($linkedCount -gt 0) {
+        $rpcOutServers = @($linkedServers | Where-Object { $_.RpcOutEnabled -eq 'Yes' })
+        $savedCredServers = @($linkedServers | Where-Object { $_.RemoteLoginName -and $_.RemoteLoginName -ne '' })
+        $selfCredServers = @($linkedServers | Where-Object { $_.UsesSelfCredential -eq 'Yes' })
+        $exploitableLinked = @($rpcOutServers | Where-Object {
+            ($_.RemoteLoginName -and $_.RemoteLoginName -ne '') -or $_.UsesSelfCredential -eq 'Yes'
+        })
+
+        if ($exploitableLinked.Count -gt 0) {
+            $ap9Status = "Exploitable"
+            $names = ($exploitableLinked | Select-Object -ExpandProperty LinkedServerName -Unique) -join ', '
+            $ap9State = "$($exploitableLinked.Count) linked server(s) with RPC out + credentials: $names"
+        }
+        elseif ($rpcOutServers.Count -gt 0) {
+            $ap9Status = "Partially Exploitable"
+            $ap9State = "$($rpcOutServers.Count) linked server(s) with RPC out but no saved/self credentials"
+        }
+        else {
+            $ap9Status = "Partially Exploitable"
+            $names = ($linkedServers | Select-Object -ExpandProperty LinkedServerName -Unique) -join ', '
+            $ap9State = "$linkedCount linked server(s) configured (RPC out disabled): $names"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Linked Server Pivot"
+        KillChainPhase = "Lateral Movement"
+        Exploitability = $ap9Status
+        Prerequisites  = $ap9Prereqs
+        CurrentState   = $ap9State
+        Impact         = "Execute queries and commands on remote SQL Server instances using stored or passthrough credentials"
+        Remediation    = "Remove unnecessary linked servers; disable RPC out; use least-privilege mapped logins instead of self-credential"
+    })
+
+    # Attack Path 10: Ad Hoc Distributed Queries
+    $ap10Status = "Mitigated"
+    $ap10State = "Ad Hoc Distributed Queries: Disabled"
+    $ap10Prereqs = "Ad Hoc Distributed Queries enabled + sysadmin or CONTROL SERVER permission"
+    if ($adHocEnabled) {
+        $ap10State = "Ad Hoc Distributed Queries: Enabled"
+        if ($sysadminCount -gt 0) {
+            $ap10Status = "Exploitable"
+            $ap10State += "; $sysadminCount sysadmin(s) can use OPENROWSET/OPENDATASOURCE to any remote server"
+        }
+        else {
+            $ap10Status = "Partially Exploitable"
+            $ap10State += "; Enabled but no sysadmin access detected"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Ad Hoc Distributed Queries"
+        KillChainPhase = "Lateral Movement"
+        Exploitability = $ap10Status
+        Prerequisites  = $ap10Prereqs
+        CurrentState   = $ap10State
+        Impact         = "Query arbitrary remote SQL Server, OLE DB, or ODBC data sources without linked server configuration (OPENROWSET/OPENDATASOURCE)"
+        Remediation    = "EXEC sp_configure 'Ad Hoc Distributed Queries', 0; RECONFIGURE;"
+    })
+
+    # Attack Path 11: Database Mail Exfiltration
+    $ap11Status = "Mitigated"
+    $ap11State = "Database Mail: Disabled"
+    $ap11Prereqs = "Database Mail XPs enabled + EXECUTE permission on sp_send_dbmail or sysadmin"
+    if ($dbMailEnabled) {
+        $ap11State = "Database Mail: Enabled"
+        if ($sysadminCount -gt 0) {
+            $ap11Status = "Exploitable"
+            $ap11State += "; $sysadminCount sysadmin(s) can send email with query results attached"
+        }
+        else {
+            $ap11Status = "Partially Exploitable"
+            $ap11State += "; Enabled but no sysadmin (check DatabaseMailUserRole membership)"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Database Mail Data Exfiltration"
+        KillChainPhase = "Lateral Movement"
+        Exploitability = $ap11Status
+        Prerequisites  = $ap11Prereqs
+        CurrentState   = $ap11State
+        Impact         = "Send query results and attachments via email (data exfiltration via SMTP out-of-band channel)"
+        Remediation    = "EXEC sp_configure 'Database Mail XPs', 0; RECONFIGURE; Remove unnecessary DatabaseMailUserRole members"
+    })
+
+    # ---- PERSISTENCE PHASE ----
+
+    # Attack Path 12: Startup Procedure Persistence
+    $ap12Status = "Mitigated"
+    $ap12State = "Startup procedure scanning: Disabled"
+    $ap12Prereqs = "scan for startup procs enabled + existing or createable startup procedures"
+    $startupCount = if ($startupProcs) { @($startupProcs).Count } else { 0 }
+    if ($startupProcsScan) {
+        $ap12State = "Startup procedure scanning: Enabled"
+        if ($startupCount -gt 0) {
+            $ap12Status = "Exploitable"
+            $procNames = ($startupProcs | ForEach-Object { "$($_.SchemaName).$($_.ProcedureName)" }) -join ', '
+            $ap12State += "; $startupCount startup proc(s): $procNames"
+        }
+        elseif ($sysadminCount -gt 1) {
+            $ap12Status = "Partially Exploitable"
+            $ap12State += "; No startup procs yet but $sysadminCount sysadmins could create them"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Startup Procedure Persistence"
+        KillChainPhase = "Persistence"
+        Exploitability = $ap12Status
+        Prerequisites  = $ap12Prereqs
+        CurrentState   = $ap12State
+        Impact         = "Stored procedure executes automatically every time SQL Server starts (persistent backdoor)"
+        Remediation    = "EXEC sp_configure 'scan for startup procs', 0; RECONFIGURE; Review: SELECT * FROM sys.procedures WHERE OBJECTPROPERTY(object_id,'ExecIsStartup')=1"
+    })
+
+    # Attack Path 13: Agent Job Persistence
+    $ap13Status = "Mitigated"
+    $ap13State = "SQL Agent: Not running"
+    $ap13Prereqs = "SQL Agent running + sysadmin or SQLAgentOperatorRole to create/modify jobs"
+    if ($agentRunning) {
+        $ap13State = "SQL Agent: Running"
+        if ($sysadminCount -gt 1) {
+            $ap13Status = "Exploitable"
+            $ap13State += "; $sysadminCount sysadmins can create scheduled jobs for persistent execution"
+        }
+        elseif ($sysadminCount -eq 1) {
+            $ap13Status = "Partially Exploitable"
+            $ap13State += "; Only 1 sysadmin (limited job creation surface)"
+        }
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "SQL Agent Job Persistence"
+        KillChainPhase = "Persistence"
+        Exploitability = $ap13Status
+        Prerequisites  = $ap13Prereqs
+        CurrentState   = $ap13State
+        Impact         = "Create or modify SQL Agent jobs to execute malicious commands on a schedule (survives reboots)"
+        Remediation    = "Restrict sysadmin membership; audit SQL Agent job creation and modification; use job step proxies with least privilege"
+    })
+
+    # Attack Path 14: Trigger-based Persistence
+    $ap14Status = "Mitigated"
+    $ap14State = "No enabled server triggers found"
+    $ap14Prereqs = "CREATE/ALTER trigger permission + DDL/DML triggers on server or database objects"
+    $triggerCount = if ($serverTriggers) { @($serverTriggers).Count } else { 0 }
+    if ($triggerCount -gt 0) {
+        $ap14Status = "Exploitable"
+        $trigNames = ($serverTriggers | ForEach-Object { $_.TriggerName }) -join ', '
+        $ap14State = "$triggerCount enabled server trigger(s): $trigNames"
+    }
+    elseif ($sysadminCount -gt 1) {
+        $ap14Status = "Partially Exploitable"
+        $ap14State = "No server triggers but $sysadminCount sysadmins could create them"
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Trigger-based Persistence"
+        KillChainPhase = "Persistence"
+        Exploitability = $ap14Status
+        Prerequisites  = $ap14Prereqs
+        CurrentState   = $ap14State
+        Impact         = "DDL/DML triggers execute automatically on database events (CREATE, ALTER, INSERT, etc.) for covert persistence"
+        Remediation    = "Review server triggers: SELECT * FROM sys.server_triggers; Remove unauthorized triggers; restrict CREATE DDL TRIGGER permission"
+    })
+
+    # ---- CREDENTIAL ACCESS PHASE ----
+
+    # Attack Path 15: sa Brute Force
+    $ap15Status = "Mitigated"
+    $ap15State = "sa account: Disabled or Windows-only auth"
+    $ap15Prereqs = "sa account enabled + mixed mode authentication + weak/no password policy"
+    if ($saEnabled -and $mixedMode) {
+        if ($saNoPolicy) {
+            $ap15Status = "Exploitable"
+            $ap15State = "sa enabled + mixed mode + NO password policy (brute force viable)"
+        }
+        else {
+            $ap15Status = "Partially Exploitable"
+            $ap15State = "sa enabled + mixed mode but password policy is enforced"
+        }
+    }
+    elseif ($saEnabled) {
+        $ap15Status = "Partially Exploitable"
+        $ap15State = "sa enabled but Windows-only authentication (network access limited)"
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "SA Account Brute Force"
+        KillChainPhase = "Credential Access"
+        Exploitability = $ap15Status
+        Prerequisites  = $ap15Prereqs
+        CurrentState   = $ap15State
+        Impact         = "Full sysadmin access via the well-known sa account (default target for attackers)"
+        Remediation    = "ALTER LOGIN sa DISABLE; Switch to Windows authentication only; if sa must be enabled, enforce strong password policy"
+    })
+
+    # Attack Path 16: Credential Harvesting
+    $ap16Status = "Mitigated"
+    $ap16State = "No stored credentials found"
+    $ap16Prereqs = "Linked server saved credentials OR agent job embedded credentials OR database-scoped credentials"
+    $credSources = @()
+    # Check linked server saved credentials
+    $savedCredCount = if ($linkedServers) { @($linkedServers | Where-Object { $_.RemoteLoginName -and $_.RemoteLoginName -ne '' }).Count } else { 0 }
+    if ($savedCredCount -gt 0) { $credSources += "$savedCredCount linked server saved login(s)" }
+    # Check database-scoped credentials
+    $dbCredCount = if ($dbScopedCreds) { @($dbScopedCreds).Count } else { 0 }
+    if ($dbCredCount -gt 0) { $credSources += "$dbCredCount database-scoped credential(s)" }
+    # Check agent job steps for embedded credentials (connection strings, passwords)
+    $suspiciousSteps = 0
+    if ($dangerousJobSteps) {
+        foreach ($step in @($dangerousJobSteps)) {
+            if ($step.StepCommand -match '(?i)(password|pwd)\s*=' -or $step.StepCommand -match '(?i)credential') {
+                $suspiciousSteps++
+            }
+        }
+    }
+    if ($suspiciousSteps -gt 0) { $credSources += "$suspiciousSteps job step(s) with possible embedded credentials" }
+
+    if ($credSources.Count -gt 0) {
+        $ap16Status = "Exploitable"
+        $ap16State = ($credSources -join '; ')
+    }
+    [void]$attackPaths.Add([PSCustomObject]@{
+        AttackPath     = "Credential Harvesting"
+        KillChainPhase = "Credential Access"
+        Exploitability = $ap16Status
+        Prerequisites  = $ap16Prereqs
+        CurrentState   = $ap16State
+        Impact         = "Extract stored credentials from linked servers, agent jobs, or database-scoped credentials for further compromise"
+        Remediation    = "Remove saved passwords from linked servers (use integrated auth); use SQL Agent proxies instead of embedding credentials; rotate and audit database-scoped credentials"
+    })
+
+    # ================================================================
+    # Build Kill Chain Phase Summary
+    # ================================================================
+    $phases = @("Execution", "Privilege Escalation", "Lateral Movement", "Persistence", "Credential Access")
+    $phaseSummary = foreach ($phase in $phases) {
+        $pathsInPhase = @($attackPaths | Where-Object { $_.KillChainPhase -eq $phase })
+        $exploitable = @($pathsInPhase | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
+        $partial = @($pathsInPhase | Where-Object { $_.Exploitability -eq 'Partially Exploitable' }).Count
+        $mitigated = @($pathsInPhase | Where-Object { $_.Exploitability -eq 'Mitigated' }).Count
+        $risk = if ($exploitable -gt 0) { 'Critical' }
+                elseif ($partial -gt 0) { 'Warning' }
+                else { 'Info' }
+        $keyNames = @($pathsInPhase | Where-Object { $_.Exploitability -ne 'Mitigated' } | ForEach-Object { $_.AttackPath })
+        $keyNamesStr = if ($keyNames.Count -gt 0) { $keyNames -join ', ' } else { 'None' }
+
+        [PSCustomObject]@{
+            Phase            = $phase
+            ExploitableCount = $exploitable
+            PartialCount     = $partial
+            MitigatedCount   = $mitigated
+            OverallRisk      = $risk
+            KeyFindings      = $keyNamesStr
+        }
+    }
+
+    $exploitableTotal = @($attackPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
+    $logLevel = if ($exploitableTotal -gt 0) { "Warning" } else { "Success" }
+    Write-Log "    Kill chain assessment complete: $exploitableTotal exploitable path(s) of $($attackPaths.Count) evaluated" -Level $logLevel
+
+    return @{
+        AttackPaths     = $attackPaths
+        KillChainPhases = $phaseSummary
+    }
+}
+
 #endregion
 
 #region ==================== HTML REPORT GENERATION ====================
@@ -1241,6 +2052,20 @@ function ConvertTo-HtmlTable {
 
             # Color coding for security assessment severity
             if ($prop -eq "Severity") {
+                if ($val -eq "Critical") { $cellClass = " class='status-critical'" }
+                elseif ($val -eq "Warning") { $cellClass = " class='status-warning'" }
+                elseif ($val -eq "Info") { $cellClass = " class='status-ok'" }
+            }
+
+            # Color coding for kill chain exploitability status
+            if ($prop -eq "Exploitability") {
+                if ($val -eq "Exploitable") { $cellClass = " class='status-critical'" }
+                elseif ($val -eq "Partially Exploitable") { $cellClass = " class='status-warning'" }
+                elseif ($val -eq "Mitigated") { $cellClass = " class='status-ok'" }
+            }
+
+            # Color coding for kill chain phase overall risk
+            if ($prop -eq "OverallRisk") {
                 if ($val -eq "Critical") { $cellClass = " class='status-critical'" }
                 elseif ($val -eq "Warning") { $cellClass = " class='status-warning'" }
                 elseif ($val -eq "Info") { $cellClass = " class='status-ok'" }
@@ -1504,6 +2329,16 @@ function New-ServerReport {
     $secTotal = $secCritical + $secWarning + $secInfo
     $secColor = if ($secCritical -gt 0) { '#dc3545' } elseif ($secWarning -gt 0) { '#ffc107' } else { '#28a745' }
 
+    # Kill chain assessment counts
+    $kcExploitable = 0
+    $kcPartial = 0
+    if ($InventoryData.KillChainAssessment -and $InventoryData.KillChainAssessment.AttackPaths) {
+        $kcPaths = @($InventoryData.KillChainAssessment.AttackPaths)
+        $kcExploitable = @($kcPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
+        $kcPartial = @($kcPaths | Where-Object { $_.Exploitability -eq 'Partially Exploitable' }).Count
+    }
+    $kcColor = if ($kcExploitable -gt 0) { '#dc3545' } elseif ($kcPartial -gt 0) { '#ffc107' } else { '#28a745' }
+
     $html = [System.Text.StringBuilder]::new()
     [void]$html.AppendLine((Get-HtmlHeader))
     [void]$html.AppendLine("<title>SQL Inventory - $([System.Web.HttpUtility]::HtmlEncode($serverName))</title>")
@@ -1569,6 +2404,10 @@ function New-ServerReport {
                 <div class="metric-value" style="color: $secColor">$secTotal</div>
                 <div class="metric-label">Security Findings</div>
             </div>
+            <div class="metric-card">
+                <div class="metric-value" style="color: $kcColor">$kcExploitable</div>
+                <div class="metric-label">Exploitable Paths</div>
+            </div>
         </div>
 "@)
 
@@ -1584,6 +2423,31 @@ function New-ServerReport {
             </div>
             <div id="sec-assessment" class="section-content$secActiveClass">
                 $(ConvertTo-HtmlTable -Data $InventoryData.SecurityAssessment -Properties @('Finding','Severity','CurrentValue','Detail','Remediation') -EmptyMessage 'No security findings - all checks passed')
+            </div>
+        </div>
+"@)
+
+    # Section: Kill Chain Assessment
+    $kcActiveClass = if ($kcExploitable -gt 0) { " active" } else { "" }
+    $kcHeaderActive = if ($kcExploitable -gt 0) { " active" } else { "" }
+    $kcSummaryText = if ($kcExploitable -gt 0) { "$kcExploitable Exploitable, $kcPartial Partial" }
+                     elseif ($kcPartial -gt 0) { "$kcPartial Partially Exploitable" }
+                     else { "All paths mitigated" }
+
+    [void]$html.AppendLine(@"
+        <div class="section">
+            <div class="section-header$kcHeaderActive" onclick="toggleSection('sec-killchain')">
+                Kill Chain Assessment ($kcSummaryText) <span class="toggle">&#9654;</span>
+            </div>
+            <div id="sec-killchain" class="section-content$kcActiveClass">
+                <div class="sub-section">
+                    <h3>Kill Chain Phase Summary</h3>
+                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.KillChainPhases } else { $null }) -Properties @('Phase','ExploitableCount','PartialCount','MitigatedCount','OverallRisk','KeyFindings') -EmptyMessage 'Kill chain assessment not available')
+                </div>
+                <div class="sub-section">
+                    <h3>Attack Path Details</h3>
+                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.AttackPaths } else { $null }) -Properties @('AttackPath','KillChainPhase','Exploitability','Prerequisites','CurrentState','Impact','Remediation') -EmptyMessage 'No attack paths evaluated')
+                </div>
             </div>
         </div>
 "@)
@@ -1738,6 +2602,14 @@ function New-SummaryReport {
     $totalSecCritical = ($ServerResults | ForEach-Object { if ($_.SecurityAssessment) { @($_.SecurityAssessment | Where-Object { $_.Severity -eq 'Critical' }).Count } else { 0 } } | Measure-Object -Sum).Sum
     $summarySecColor = if ($totalSecCritical -gt 0) { '#dc3545' } elseif ($totalSecFindings -gt 0) { '#ffc107' } else { '#28a745' }
 
+    # Kill chain aggregate metrics
+    $totalExploitable = ($ServerResults | ForEach-Object {
+        if ($_.KillChainAssessment -and $_.KillChainAssessment.AttackPaths) {
+            @($_.KillChainAssessment.AttackPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
+        } else { 0 }
+    } | Measure-Object -Sum).Sum
+    $summaryKcColor = if ($totalExploitable -gt 0) { '#dc3545' } else { '#28a745' }
+
     $html = [System.Text.StringBuilder]::new()
     [void]$html.AppendLine((Get-HtmlHeader))
     [void]$html.AppendLine("<title>DBExplorer - Summary Report</title>")
@@ -1790,6 +2662,10 @@ function New-SummaryReport {
                 <div class="metric-value" style="color: $summarySecColor">$totalSecFindings</div>
                 <div class="metric-label">Security Findings</div>
             </div>
+            <div class="metric-card">
+                <div class="metric-value" style="color: $summaryKcColor">$totalExploitable</div>
+                <div class="metric-label">Exploitable Kill Chains</div>
+            </div>
         </div>
 "@)
 
@@ -1818,15 +2694,20 @@ function New-SummaryReport {
                         elseif ($srvSecWarning -gt 0) { "$srvSecWarning Warning" }
                         else { "Clean" }
 
+        $srvExploitable = if ($srv.KillChainAssessment -and $srv.KillChainAssessment.AttackPaths) {
+            @($srv.KillChainAssessment.AttackPaths | Where-Object { $_.Exploitability -eq 'Exploitable' }).Count
+        } else { 0 }
+
         [PSCustomObject]@{
-            Server         = $srv.Computer
-            Version        = $srvVersion
-            Edition        = $srvEdition
-            Databases      = $dbCount
-            "Size (GB)"    = $sizeGB
-            BackupHealth   = $backupHealth
-            SecurityStatus = $srvSecStatus
-            ReportFile     = $srv.ReportFile
+            Server           = $srv.Computer
+            Version          = $srvVersion
+            Edition          = $srvEdition
+            Databases        = $dbCount
+            "Size (GB)"      = $sizeGB
+            BackupHealth     = $backupHealth
+            SecurityStatus   = $srvSecStatus
+            ExploitablePaths = $srvExploitable
+            ReportFile       = $srv.ReportFile
         }
     }
 
@@ -1840,7 +2721,7 @@ function New-SummaryReport {
                 <table>
                     <thead><tr>
                         <th>Server</th><th>Version</th><th>Edition</th>
-                        <th>Databases</th><th>Size (GB)</th><th>Backup Health</th><th>Security</th><th>Report</th>
+                        <th>Databases</th><th>Size (GB)</th><th>Backup Health</th><th>Security</th><th>Kill Chains</th><th>Report</th>
                     </tr></thead>
                     <tbody>
 "@)
@@ -1855,6 +2736,8 @@ function New-SummaryReport {
         $secClass = if ($row.SecurityStatus -match 'Critical') { "status-critical" }
                     elseif ($row.SecurityStatus -match 'Warning') { "status-warning" }
                     else { "status-ok" }
+        $kcClass = if ($row.ExploitablePaths -gt 0) { "status-critical" } else { "status-ok" }
+        $kcDisplay = if ($row.ExploitablePaths -gt 0) { "$($row.ExploitablePaths) Exploitable" } else { "None" }
         $reportLink = if ($row.ReportFile) {
             $fileName = Split-Path $row.ReportFile -Leaf
             "<a href='$([System.Web.HttpUtility]::HtmlEncode($fileName))'>View Report</a>"
@@ -1869,6 +2752,7 @@ function New-SummaryReport {
                         <td>$($row.'Size (GB)')</td>
                         <td class='$healthClass'>$($row.BackupHealth)</td>
                         <td class='$secClass'>$($row.SecurityStatus)</td>
+                        <td class='$kcClass'>$kcDisplay</td>
                         <td>$reportLink</td>
                     </tr>
 "@)
@@ -2002,9 +2886,10 @@ function Invoke-DBExplorer {
             Backups          = $null
             Security         = $null
             DatabaseSecurity = @{}
-            AgentJobs          = $null
-            SecurityAssessment = $null
-            Errors             = [System.Collections.ArrayList]::new()
+            AgentJobs            = $null
+            SecurityAssessment   = $null
+            KillChainAssessment  = $null
+            Errors               = [System.Collections.ArrayList]::new()
             ReportFile         = $null
         }
 
@@ -2139,6 +3024,29 @@ function Invoke-DBExplorer {
             }
             catch {
                 $errMsg = "Security assessment failed: $_"
+                Write-Log "    $errMsg" -Level Warning
+                [void]$inventoryData.Errors.Add($errMsg)
+            }
+
+            # Kill Chain Assessment
+            Write-Log "    Running kill chain assessment..."
+            try {
+                $kcParams = @{
+                    Computer         = $sqlHost
+                    InstanceName     = $instName
+                    WinCredential    = $winCred
+                    SecurityFindings = @()
+                    ServerConfig     = @{}
+                }
+                if ($inventoryData.SecurityAssessment) { $kcParams.SecurityFindings = $inventoryData.SecurityAssessment }
+                if ($inventoryData.Config) { $kcParams.ServerConfig = $inventoryData.Config }
+                if ($inventoryData.Security) { $kcParams.ServerSecurity = $inventoryData.Security }
+                if ($inventoryData.DatabaseSecurity) { $kcParams.DatabaseSecurity = $inventoryData.DatabaseSecurity }
+                if ($inventoryData.AgentJobs) { $kcParams.AgentJobs = $inventoryData.AgentJobs }
+                $inventoryData.KillChainAssessment = Get-SQLKillChainAssessment @kcParams
+            }
+            catch {
+                $errMsg = "Kill chain assessment failed: $_"
                 Write-Log "    $errMsg" -Level Warning
                 [void]$inventoryData.Errors.Add($errMsg)
             }
