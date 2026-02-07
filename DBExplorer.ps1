@@ -77,6 +77,7 @@ $ErrorActionPreference = "Continue"
 $script:StartTime = Get-Date
 $script:LogFile = $null
 $script:CredentialCache = @{}
+$script:GlobalCredential = $null
 
 #region ==================== LOGGING ====================
 
@@ -304,15 +305,17 @@ function Get-CredentialFallback {
         return $script:CredentialCache[$Computer]
     }
 
-    Write-Log "Current credentials failed for $Computer. Prompting for alternate credentials..." -Level Warning
+    $currentAuth = if ($script:GlobalCredential) { $script:GlobalCredential.UserName } else { "current running context" }
+    Write-Log "Authentication with $currentAuth failed for $Computer. Prompting for alternate credentials..." -Level Warning
 
     $choice = $null
     while ($choice -notin @("W", "K")) {
         Write-Host ""
-        Write-Host "Authentication failed for $Computer. Choose an option:" -ForegroundColor Yellow
-        Write-Host "  [W] Enter Windows credentials (domain\user)"
+        Write-Host "Authentication failed for $Computer using $currentAuth." -ForegroundColor Yellow
+        Write-Host "Choose an option:" -ForegroundColor Yellow
+        Write-Host "  [W] Enter alternative Windows credentials for this server (domain\user)"
         Write-Host "  [K] Skip this server"
-        $choice = (Read-Host "Selection").ToUpper()
+        $choice = (Read-Host "Selection").Trim().ToUpper()
     }
 
     if ($choice -eq "K") {
@@ -2041,7 +2044,6 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
 
 function ConvertTo-HtmlTable {
     param(
-        [Parameter(Mandatory)]
         $Data,
 
         [string[]]$Properties,
@@ -2049,7 +2051,7 @@ function ConvertTo-HtmlTable {
         [string]$EmptyMessage = "No data available"
     )
 
-    if (-not $Data -or ($Data | Measure-Object).Count -eq 0) {
+    if (-not $Data -or @($Data).Count -eq 0) {
         return "<p class='no-data'>$EmptyMessage</p>"
     }
 
@@ -2369,8 +2371,8 @@ function New-ServerReport {
     Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
 
     $scanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $props = $InventoryData.Config.ServerProperties
-    $uptime = $InventoryData.Config.Uptime
+    $props = if ($InventoryData.Config) { $InventoryData.Config.ServerProperties } else { $null }
+    $uptime = if ($InventoryData.Config) { $InventoryData.Config.Uptime } else { $null }
 
     $serverName = if ($props) { $props.ServerName } else { $Computer }
     $version = if ($props) { "$($props.ProductVersion) $($props.ProductLevel)" } else { "Unknown" }
@@ -2383,8 +2385,9 @@ function New-ServerReport {
     $totalSizeMB = if ($InventoryData.Databases) { ($InventoryData.Databases | Measure-Object -Property TotalSizeMB -Sum).Sum } else { 0 }
     $totalSizeGB = [math]::Round($totalSizeMB / 1024, 2)
     $uptimeDays = if ($uptime) { $uptime.UptimeDays } else { "N/A" }
-    $maxMemory = if ($InventoryData.Config.Settings) {
-        ($InventoryData.Config.Settings | Where-Object { $_.ConfigName -eq "max server memory (MB)" }).ValueInUse
+    $configSettings = if ($InventoryData.Config) { $InventoryData.Config.Settings } else { $null }
+    $maxMemory = if ($configSettings) {
+        ($configSettings | Where-Object { $_.ConfigName -eq "max server memory (MB)" }).ValueInUse
     } else { "N/A" }
 
     # Security assessment counts
@@ -2531,11 +2534,11 @@ function New-ServerReport {
             <div id="sec-config" class="section-content active">
                 <div class="sub-section">
                     <h3>Configuration Settings</h3>
-                    $(ConvertTo-HtmlTable -Data $InventoryData.Config.Settings -Properties @('ConfigName','ValueInUse','Description') -EmptyMessage 'Could not retrieve configuration settings')
+                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.Config) { $InventoryData.Config.Settings } else { $null }) -Properties @('ConfigName','ValueInUse','Description') -EmptyMessage 'Could not retrieve configuration settings (insufficient permissions on master database)')
                 </div>
                 <div class="sub-section">
                     <h3>SQL Services</h3>
-                    $(ConvertTo-HtmlTable -Data $InventoryData.Config.Services -Properties @('servicename','service_account','startup_type_desc','status_desc') -EmptyMessage 'Could not retrieve service information')
+                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.Config) { $InventoryData.Config.Services } else { $null }) -Properties @('servicename','service_account','startup_type_desc','status_desc') -EmptyMessage 'Could not retrieve service information (insufficient permissions or DMV access denied)')
                 </div>
             </div>
         </div>
@@ -2572,10 +2575,10 @@ function New-ServerReport {
                 Security &mdash; Server Logins <span class="toggle">&#9654;</span>
             </div>
             <div id="sec-logins" class="section-content">
-                $(ConvertTo-HtmlTable -Data $InventoryData.Security.Logins -Properties @('LoginName','LoginType','IsDisabled','ServerRoles','CreateDate','ModifyDate') -EmptyMessage 'Could not retrieve login information')
+                $(ConvertTo-HtmlTable -Data $(if ($InventoryData.Security) { $InventoryData.Security.Logins } else { $null }) -Properties @('LoginName','LoginType','IsDisabled','ServerRoles','CreateDate','ModifyDate') -EmptyMessage 'Could not retrieve login information (insufficient permissions)')
                 <div class="sub-section">
                     <h3>Server-Level Permissions</h3>
-                    $(ConvertTo-HtmlTable -Data $InventoryData.Security.ServerPermissions -Properties @('PrincipalName','PrincipalType','Permission','PermissionState','PermissionClass') -EmptyMessage 'No explicit server-level permissions found')
+                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.Security) { $InventoryData.Security.ServerPermissions } else { $null }) -Properties @('PrincipalName','PrincipalType','Permission','PermissionState','PermissionClass') -EmptyMessage 'No explicit server-level permissions found')
                 </div>
             </div>
         </div>
@@ -2589,9 +2592,11 @@ function New-ServerReport {
             [void]$dbSecurityHtml.AppendLine("<div class='sub-section'>")
             [void]$dbSecurityHtml.AppendLine("<h3>$([System.Web.HttpUtility]::HtmlEncode($dbName))</h3>")
             [void]$dbSecurityHtml.AppendLine("<h4 style='font-size:13px;color:#666;margin:8px 0;'>Users &amp; Role Memberships</h4>")
-            [void]$dbSecurityHtml.AppendLine((ConvertTo-HtmlTable -Data $dbSec.Users -Properties @('UserName','UserType','DatabaseRoles','LinkedLogin','CreateDate') -EmptyMessage "No custom users in $dbName"))
+            $dbUsers = if ($dbSec) { $dbSec.Users } else { $null }
+            [void]$dbSecurityHtml.AppendLine((ConvertTo-HtmlTable -Data $dbUsers -Properties @('UserName','UserType','DatabaseRoles','LinkedLogin','CreateDate') -EmptyMessage "No custom users in $dbName (access may be denied)"))
             [void]$dbSecurityHtml.AppendLine("<h4 style='font-size:13px;color:#666;margin:8px 0;'>Explicit Permissions</h4>")
-            [void]$dbSecurityHtml.AppendLine((ConvertTo-HtmlTable -Data $dbSec.Permissions -Properties @('PrincipalName','Permission','PermissionState','PermissionClass','ObjectName') -EmptyMessage "No explicit permissions in $dbName"))
+            $dbPerms = if ($dbSec) { $dbSec.Permissions } else { $null }
+            [void]$dbSecurityHtml.AppendLine((ConvertTo-HtmlTable -Data $dbPerms -Properties @('PrincipalName','Permission','PermissionState','PermissionClass','ObjectName') -EmptyMessage "No explicit permissions in $dbName"))
             [void]$dbSecurityHtml.AppendLine("</div>")
         }
     }
@@ -2741,7 +2746,7 @@ function New-SummaryReport {
 
     # Server inventory table
     $summaryRows = foreach ($srv in $ServerResults) {
-        $props = $srv.Config.ServerProperties
+        $props = if ($srv.Config) { $srv.Config.ServerProperties } else { $null }
         $dbCount = if ($srv.Databases) { ($srv.Databases | Measure-Object).Count } else { 0 }
         $sizeMB = if ($srv.Databases) { ($srv.Databases | Measure-Object -Property TotalSizeMB -Sum).Sum } else { 0 }
         $sizeGB = [math]::Round($sizeMB / 1024, 2)
@@ -2901,6 +2906,37 @@ function Invoke-DBExplorer {
     Write-Log "DBExplorer started at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     Write-Log "Output directory: $reportDir"
 
+    # ---- Authentication Selection ----
+    Write-Host ""
+    Write-Host "  Authentication Configuration" -ForegroundColor Cyan
+    Write-Host "  =============================" -ForegroundColor DarkCyan
+    Write-Host ""
+    Write-Host "  Running as: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)" -ForegroundColor Gray
+    Write-Host ""
+
+    $authChoice = $null
+    while ($authChoice -notin @("C", "A")) {
+        Write-Host "  How do you want to authenticate to remote servers?" -ForegroundColor Yellow
+        Write-Host "    [C] Use current running context ($([System.Security.Principal.WindowsIdentity]::GetCurrent().Name))"
+        Write-Host "    [A] Provide alternative Windows credentials"
+        $authChoice = (Read-Host "  Selection").Trim().ToUpper()
+    }
+
+    $script:GlobalCredential = $null
+    if ($authChoice -eq "A") {
+        $script:GlobalCredential = Get-Credential -Message "Enter Windows credentials for remote SQL Server access (domain\username)"
+        if (-not $script:GlobalCredential) {
+            Write-Log "No credentials provided. Falling back to current running context." -Level Warning
+        }
+        else {
+            Write-Log "Using alternate credentials: $($script:GlobalCredential.UserName)" -Level Info
+        }
+    }
+    else {
+        Write-Log "Using current running context for authentication"
+    }
+    Write-Host ""
+
     # ---- Phase 1: Computer Discovery ----
     $computers = @()
     if ($ComputerName) {
@@ -2948,7 +2984,7 @@ function Invoke-DBExplorer {
         Write-Log "=== [$serverIndex/$($sqlHosts.Count)] Processing: $sqlHost ==="
         Write-Progress -Activity "SQL Inventory" -Status "Processing $sqlHost ($serverIndex of $($sqlHosts.Count))" -PercentComplete (($serverIndex / $sqlHosts.Count) * 100)
 
-        $winCred = $null
+        $winCred = $script:GlobalCredential
         $inventoryData = @{
             Computer         = $sqlHost
             Config           = $null
@@ -2963,10 +2999,14 @@ function Invoke-DBExplorer {
             ReportFile         = $null
         }
 
-        # Test WinRM access
-        $winrmOk = Test-WinRMAccess -Computer $sqlHost
+        # Test WinRM access (use global credential if set, otherwise current user)
+        $testParams = @{ Computer = $sqlHost }
+        if ($winCred) { $testParams.Credential = $winCred }
+        $winrmOk = Test-WinRMAccess @testParams
+
         if (-not $winrmOk) {
-            Write-Log "  WinRM access failed with current credentials for $sqlHost" -Level Warning
+            $credSource = if ($winCred) { "provided credentials ($($winCred.UserName))" } else { "current credentials" }
+            Write-Log "  WinRM access failed with $credSource for $sqlHost" -Level Warning
             $winCred = Get-CredentialFallback -Computer $sqlHost
 
             if (-not $winCred) {
@@ -3005,18 +3045,18 @@ function Invoke-DBExplorer {
                 WinCredential = $winCred
             }
 
-            # Server config
+            # Server config (queries master database)
             Write-Log "    Collecting server configuration..."
             try {
                 $inventoryData.Config = Get-SQLServerConfig @queryBaseParams
             }
             catch {
-                $errMsg = "Server config collection failed: $_"
+                $errMsg = "Server config collection failed (may lack permissions on master database): $_"
                 Write-Log "    $errMsg" -Level Warning
                 [void]$inventoryData.Errors.Add($errMsg)
             }
 
-            # Databases
+            # Databases (queries master database)
             Write-Log "    Collecting database inventory..."
             try {
                 $dbParams = $queryBaseParams.Clone()
@@ -3024,29 +3064,29 @@ function Invoke-DBExplorer {
                 $inventoryData.Databases = Get-SQLDatabases @dbParams
             }
             catch {
-                $errMsg = "Database inventory failed: $_"
+                $errMsg = "Database inventory failed (may lack permissions on master/sys.databases): $_"
                 Write-Log "    $errMsg" -Level Warning
                 [void]$inventoryData.Errors.Add($errMsg)
             }
 
-            # Backups
+            # Backups (queries master + msdb)
             Write-Log "    Collecting backup status..."
             try {
                 $inventoryData.Backups = Get-SQLBackupStatus @queryBaseParams
             }
             catch {
-                $errMsg = "Backup status collection failed: $_"
+                $errMsg = "Backup status collection failed (may lack permissions on msdb): $_"
                 Write-Log "    $errMsg" -Level Warning
                 [void]$inventoryData.Errors.Add($errMsg)
             }
 
-            # Security - Server level
+            # Security - Server level (queries master)
             Write-Log "    Collecting server security..."
             try {
                 $inventoryData.Security = Get-SQLServerSecurity @queryBaseParams
             }
             catch {
-                $errMsg = "Server security collection failed: $_"
+                $errMsg = "Server security collection failed (may lack VIEW SERVER STATE or VIEW ANY DEFINITION): $_"
                 Write-Log "    $errMsg" -Level Warning
                 [void]$inventoryData.Errors.Add($errMsg)
             }
@@ -3069,31 +3109,31 @@ function Invoke-DBExplorer {
                         $inventoryData.DatabaseSecurity[$dbName] = Get-SQLDatabaseSecurity @queryBaseParams -DatabaseName $dbName
                     }
                     catch {
-                        $errMsg = "Database security for '$dbName' failed: $_"
+                        $errMsg = "Database security for '$dbName' failed (may lack permissions on this database): $_"
                         Write-Log "      $errMsg" -Level Warning
                         [void]$inventoryData.Errors.Add($errMsg)
                     }
                 }
             }
 
-            # Agent Jobs
+            # Agent Jobs (queries msdb)
             Write-Log "    Collecting SQL Agent jobs..."
             try {
                 $inventoryData.AgentJobs = Get-SQLAgentJobs @queryBaseParams
             }
             catch {
-                $errMsg = "Agent jobs collection failed: $_"
+                $errMsg = "Agent jobs collection failed (may lack permissions on msdb): $_"
                 Write-Log "    $errMsg" -Level Warning
                 [void]$inventoryData.Errors.Add($errMsg)
             }
 
-            # Security Assessment
+            # Security Assessment (queries master + cross-database)
             Write-Log "    Running security assessment..."
             try {
                 $inventoryData.SecurityAssessment = Get-SQLSecurityAssessment @queryBaseParams
             }
             catch {
-                $errMsg = "Security assessment failed: $_"
+                $errMsg = "Security assessment failed (may lack permissions on master or target databases): $_"
                 Write-Log "    $errMsg" -Level Warning
                 [void]$inventoryData.Errors.Add($errMsg)
             }
