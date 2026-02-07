@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DBExplorer.ps1 - Safety Assessment Report</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #f0f2f5;
+        color: #333;
+        line-height: 1.6;
+    }
+    .page-header {
+        background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 50%, #1565c0 100%);
+        color: white;
+        padding: 50px 40px 40px;
+        text-align: center;
+    }
+    .page-header h1 { font-size: 36px; font-weight: 300; margin-bottom: 8px; }
+    .page-header .version { font-size: 14px; opacity: 0.7; letter-spacing: 2px; text-transform: uppercase; }
+    .page-header .tagline { font-size: 16px; opacity: 0.85; margin-top: 12px; max-width: 700px; margin-left: auto; margin-right: auto; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px 60px; }
+
+    /* Verdict Banner */
+    .verdict-banner {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        padding: 30px 40px;
+        margin: -30px auto 30px;
+        position: relative;
+        max-width: 1200px;
+        text-align: center;
+    }
+    .verdict-icon { font-size: 60px; margin-bottom: 10px; }
+    .verdict-title { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+    .verdict-subtitle { font-size: 15px; color: #666; max-width: 700px; margin: 0 auto; }
+    .verdict-safe { color: #2e7d32; }
+    .verdict-caution { color: #f57f17; }
+
+    /* Risk Summary Grid */
+    .risk-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 15px;
+        margin: 25px 0 10px;
+    }
+    .risk-card {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 18px 15px;
+        text-align: center;
+        border-left: 4px solid #ccc;
+    }
+    .risk-card.none { border-left-color: #43a047; }
+    .risk-card.low { border-left-color: #2196f3; }
+    .risk-card.medium { border-left-color: #ff9800; }
+    .risk-card.high { border-left-color: #e53935; }
+    .risk-card.critical { border-left-color: #b71c1c; }
+    .risk-count { font-size: 28px; font-weight: 700; }
+    .risk-card.none .risk-count { color: #43a047; }
+    .risk-card.low .risk-count { color: #2196f3; }
+    .risk-card.medium .risk-count { color: #ff9800; }
+    .risk-card.high .risk-count { color: #e53935; }
+    .risk-card.critical .risk-count { color: #b71c1c; }
+    .risk-label { font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+
+    /* Table of Contents */
+    .toc {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        padding: 25px 30px;
+        margin-bottom: 25px;
+    }
+    .toc h2 { font-size: 18px; color: #1b5e20; margin-bottom: 12px; }
+    .toc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 6px; }
+    .toc a {
+        color: #1b5e20;
+        text-decoration: none;
+        font-size: 14px;
+        padding: 5px 10px;
+        border-radius: 4px;
+        display: block;
+        transition: background 0.15s;
+    }
+    .toc a:hover { background: #e8f5e9; }
+    .toc a .toc-num { color: #9e9e9e; margin-right: 6px; font-size: 12px; }
+
+    /* Cards */
+    .card {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        margin-bottom: 25px;
+        overflow: hidden;
+    }
+    .card-header {
+        padding: 18px 25px;
+        font-size: 17px;
+        font-weight: 600;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        user-select: none;
+        border-bottom: 1px solid #eee;
+    }
+    .card-header:hover { background: #f8f9fa; }
+    .card-header .toggle { font-size: 14px; color: #999; transition: transform 0.2s; }
+    .card-header .toggle.open { transform: rotate(90deg); }
+    .card-body { padding: 20px 25px; display: none; }
+    .card-body.active { display: block; }
+
+    /* Section headers */
+    .section-icon { margin-right: 10px; }
+    .card-header.safe { border-left: 4px solid #43a047; }
+    .card-header.low { border-left: 4px solid #2196f3; }
+    .card-header.medium { border-left: 4px solid #ff9800; }
+    .card-header.high { border-left: 4px solid #e53935; }
+
+    /* Badge */
+    .badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-left: 10px;
+    }
+    .badge-safe { background: #e8f5e9; color: #2e7d32; }
+    .badge-low { background: #e3f2fd; color: #1565c0; }
+    .badge-medium { background: #fff3e0; color: #e65100; }
+    .badge-high { background: #ffebee; color: #c62828; }
+    .badge-none { background: #f5f5f5; color: #757575; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 14px; }
+    th {
+        background: #f5f5f5;
+        padding: 10px 14px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #555;
+        border-bottom: 2px solid #ddd;
+    }
+    td { padding: 10px 14px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:hover td { background: #f8f9fa; }
+
+    /* Status cells */
+    .status-none { background: #e8f5e9; color: #2e7d32; font-weight: 600; }
+    .status-low { background: #e3f2fd; color: #1565c0; font-weight: 600; }
+    .status-medium { background: #fff3e0; color: #e65100; font-weight: 600; }
+    .status-high { background: #ffebee; color: #c62828; font-weight: 600; }
+
+    /* Detail blocks */
+    .detail-box {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 15px 20px;
+        margin: 12px 0;
+        font-size: 14px;
+    }
+    .detail-box h4 { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .detail-box ul { padding-left: 20px; }
+    .detail-box li { margin-bottom: 4px; }
+    .detail-box code {
+        background: #e8eaf6;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 13px;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+    }
+
+    /* Code blocks */
+    pre {
+        background: #263238;
+        color: #eeffff;
+        padding: 15px 20px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 13px;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        margin: 10px 0;
+        line-height: 1.5;
+    }
+    pre .comment { color: #546e7a; }
+    pre .keyword { color: #c792ea; }
+    pre .string { color: #c3e88d; }
+    pre .line-ref { color: #ffcb6b; }
+
+    /* Callout boxes */
+    .callout {
+        border-radius: 6px;
+        padding: 15px 20px;
+        margin: 15px 0;
+        font-size: 14px;
+    }
+    .callout-safe {
+        background: #e8f5e9;
+        border-left: 4px solid #43a047;
+    }
+    .callout-info {
+        background: #e3f2fd;
+        border-left: 4px solid #2196f3;
+    }
+    .callout-warn {
+        background: #fff3e0;
+        border-left: 4px solid #ff9800;
+    }
+    .callout-danger {
+        background: #ffebee;
+        border-left: 4px solid #e53935;
+    }
+    .callout strong { display: block; margin-bottom: 4px; }
+
+    /* Footer */
+    .footer {
+        text-align: center;
+        padding: 30px;
+        color: #999;
+        font-size: 12px;
+    }
+
+    /* Print styles */
+    @media print {
+        .page-header { padding: 20px; }
+        .card-body { display: block !important; }
+        .toggle { display: none; }
+        body { background: white; }
+        .card { box-shadow: none; border: 1px solid #ddd; }
+    }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+    <div class="version">Safety Assessment Report</div>
+    <h1>DBExplorer.ps1</h1>
+    <div class="tagline">Comprehensive security and safety analysis of the MSSQL Discovery &amp; Inventory tool</div>
+</div>
+
+<div class="container">
+
+<!-- ============================================================ -->
+<!-- VERDICT BANNER -->
+<!-- ============================================================ -->
+<div class="verdict-banner">
+    <div class="verdict-icon">&#9989;</div>
+    <div class="verdict-title verdict-safe">SAFE - Read-Only Reconnaissance Tool</div>
+    <div class="verdict-subtitle">
+        DBExplorer.ps1 is a <strong>read-only</strong> inventory and discovery script. It does not modify any remote
+        systems, databases, configurations, or user data. All operations are limited to querying existing information
+        and generating local HTML reports.
+    </div>
+    <div class="risk-grid">
+        <div class="risk-card none">
+            <div class="risk-count">10</div>
+            <div class="risk-label">No Risk</div>
+        </div>
+        <div class="risk-card low">
+            <div class="risk-count">5</div>
+            <div class="risk-label">Low Risk</div>
+        </div>
+        <div class="risk-card medium">
+            <div class="risk-count">1</div>
+            <div class="risk-label">Medium Risk</div>
+        </div>
+        <div class="risk-card high">
+            <div class="risk-count">0</div>
+            <div class="risk-label">High Risk</div>
+        </div>
+        <div class="risk-card critical">
+            <div class="risk-count">0</div>
+            <div class="risk-label">Critical Risk</div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TABLE OF CONTENTS -->
+<!-- ============================================================ -->
+<div class="toc">
+    <h2>Assessment Categories</h2>
+    <div class="toc-grid">
+        <a href="#sec1"><span class="toc-num">1.</span> Executive Summary</a>
+        <a href="#sec2"><span class="toc-num">2.</span> Data Modification Risk</a>
+        <a href="#sec3"><span class="toc-num">3.</span> Remote Write Operations</a>
+        <a href="#sec4"><span class="toc-num">4.</span> Destructive Operations</a>
+        <a href="#sec5"><span class="toc-num">5.</span> Dangerous Command Usage</a>
+        <a href="#sec6"><span class="toc-num">6.</span> Permission Escalation</a>
+        <a href="#sec7"><span class="toc-num">7.</span> Network Exposure</a>
+        <a href="#sec8"><span class="toc-num">8.</span> Credential Handling</a>
+        <a href="#sec9"><span class="toc-num">9.</span> File System Impact</a>
+        <a href="#sec10"><span class="toc-num">10.</span> SQL Injection Risk</a>
+        <a href="#sec11"><span class="toc-num">11.</span> Error Suppression</a>
+        <a href="#sec12"><span class="toc-num">12.</span> Log File Contents</a>
+        <a href="#sec13"><span class="toc-num">13.</span> Sensitive Data in Reports</a>
+        <a href="#sec14"><span class="toc-num">14.</span> HTML Output Safety</a>
+        <a href="#sec15"><span class="toc-num">15.</span> Complete File Write Inventory</a>
+        <a href="#sec16"><span class="toc-num">16.</span> Complete Network Operation Inventory</a>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 1. EXECUTIVE SUMMARY -->
+<!-- ============================================================ -->
+<div class="card" id="sec1">
+    <div class="card-header safe" onclick="toggleSection('body1')">
+        <span><span class="section-icon">&#128202;</span> 1. Executive Summary</span>
+        <span class="toggle open" id="toggle-body1">&#9654;</span>
+    </div>
+    <div class="card-body active" id="body1">
+        <p>This report assesses all 2,204 lines of <code>DBExplorer.ps1</code> across 16 safety categories.
+        The script contains <strong>19 PowerShell functions</strong> and generates self-contained HTML reports.</p>
+
+        <div class="callout callout-safe">
+            <strong>Overall Verdict: SAFE</strong>
+            The script is a passive, read-only reconnaissance tool. It performs no INSERT, UPDATE, DELETE, DROP,
+            ALTER, or EXEC operations on remote SQL Servers. It creates no remote files. It modifies no remote
+            configurations. Its only write operations are creating local HTML report files and log files on the
+            machine where it runs.
+        </div>
+
+        <table>
+            <thead>
+                <tr><th>Category</th><th>Risk Level</th><th>Summary</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Data Modification</td><td class="status-none">NONE</td><td>Zero INSERT/UPDATE/DELETE/DROP/ALTER statements in any SQL query</td></tr>
+                <tr><td>Remote Write Operations</td><td class="status-none">NONE</td><td>No files created, no registry writes, no config changes on remote hosts</td></tr>
+                <tr><td>Destructive Operations</td><td class="status-none">NONE</td><td>No Remove-Item, Clear-Content, Format-Volume, or equivalent commands</td></tr>
+                <tr><td>Dangerous Commands</td><td class="status-none">NONE</td><td>No Invoke-Expression, no dynamic code execution, no cmd.exe calls</td></tr>
+                <tr><td>Permission Escalation</td><td class="status-none">NONE</td><td>No privilege elevation, no RunAs, no service manipulation</td></tr>
+                <tr><td>Network Exposure</td><td class="status-none">NONE</td><td>No listening ports opened, no data sent to external services</td></tr>
+                <tr><td>Credential Handling</td><td class="status-low">LOW</td><td>Credentials cached in session memory only, never written to disk</td></tr>
+                <tr><td>File System Impact</td><td class="status-low">LOW</td><td>Creates only local report/log files in a user-specified directory</td></tr>
+                <tr><td>SQL Injection</td><td class="status-low">LOW</td><td>All queries use static SQL strings; dynamic SQL uses QUOTENAME() for safety</td></tr>
+                <tr><td>Error Suppression</td><td class="status-low">LOW</td><td>Minimal SilentlyContinue usage, comprehensive try/catch logging</td></tr>
+                <tr><td>Log File Contents</td><td class="status-low">LOW</td><td>Logs contain server names and operation status; no credentials or sensitive data</td></tr>
+                <tr><td>Sensitive Data in Reports</td><td class="status-medium">MEDIUM</td><td>Reports contain login names, service accounts, security findings, and infrastructure topology</td></tr>
+                <tr><td>HTML Output Safety</td><td class="status-none">NONE</td><td>All dynamic content is HTML-encoded; no XSS risk in generated reports</td></tr>
+                <tr><td>Third-Party Dependencies</td><td class="status-none">NONE</td><td>Uses only built-in Microsoft modules (ActiveDirectory, SqlServer/SQLPS) with .NET fallbacks</td></tr>
+                <tr><td>Obfuscation</td><td class="status-none">NONE</td><td>No encoded commands, no Base64, no compression, no obfuscation techniques</td></tr>
+                <tr><td>Exfiltration Vectors</td><td class="status-none">NONE</td><td>No HTTP/S calls, no email sending, no clipboard access, no data upload</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 2. DATA MODIFICATION RISK -->
+<!-- ============================================================ -->
+<div class="card" id="sec2">
+    <div class="card-header safe" onclick="toggleSection('body2')">
+        <span><span class="section-icon">&#128194;</span> 2. Data Modification Risk <span class="badge badge-safe">NO RISK</span></span>
+        <span class="toggle" id="toggle-body2">&#9654;</span>
+    </div>
+    <div class="card-body" id="body2">
+        <div class="callout callout-safe">
+            <strong>Finding: No data modification statements found</strong>
+            Every SQL query in the script is a SELECT statement or a read-only system catalog query.
+            There are zero INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, or EXEC (of stored procedures)
+            statements that modify remote data.
+        </div>
+
+        <div class="detail-box">
+            <h4>SQL Statements Verified</h4>
+            <ul>
+                <li><code>SELECT</code> from <code>sys.configurations</code> - Read server config values</li>
+                <li><code>SELECT</code> from <code>sys.databases</code> - Read database metadata</li>
+                <li><code>SELECT</code> from <code>sys.sql_logins</code> - Read login properties</li>
+                <li><code>SELECT</code> from <code>sys.server_principals</code> - Read server-level principals</li>
+                <li><code>SELECT</code> from <code>sys.server_role_members</code> - Read role membership</li>
+                <li><code>SELECT</code> from <code>sys.database_principals</code> - Read database users</li>
+                <li><code>SELECT</code> from <code>sys.database_permissions</code> - Read permissions</li>
+                <li><code>SELECT</code> from <code>sys.server_permissions</code> - Read server permissions</li>
+                <li><code>SELECT</code> from <code>msdb.dbo.backupset</code> - Read backup history</li>
+                <li><code>SELECT</code> from <code>msdb.dbo.sysjobs</code> / <code>sysjobhistory</code> - Read agent job info</li>
+                <li><code>SERVERPROPERTY()</code> - Read server metadata function</li>
+                <li><code>@@VERSION</code>, <code>@@SERVERNAME</code> - Read server globals</li>
+            </ul>
+        </div>
+
+        <div class="detail-box">
+            <h4>Dynamic SQL in Security Assessment</h4>
+            <p>The <code>Get-SQLSecurityAssessment</code> function (lines 895-1180) uses <code>sp_executesql</code>
+            for cross-database iteration, but the dynamic SQL contains only SELECT statements and uses
+            <code>QUOTENAME()</code> to safely escape database names. The pattern is:</p>
+            <pre><span class="comment">-- Guest access check (lines 1060-1068)</span>
+<span class="keyword">DECLARE</span> @results <span class="keyword">TABLE</span> (DatabaseName SYSNAME)
+<span class="keyword">DECLARE</span> @sql NVARCHAR(MAX) = <span class="string">''</span>
+<span class="keyword">SELECT</span> @sql = @sql + <span class="string">'USE '</span> + <span class="keyword">QUOTENAME</span>(name) + <span class="string">';
+    IF EXISTS (SELECT 1 FROM sys.database_permissions ...)</span>
+    <span class="string">INSERT @results VALUES ...'</span>  <span class="comment">-- Insert into local temp table only</span>
+<span class="keyword">FROM</span> sys.databases
+<span class="keyword">EXEC</span> sp_executesql @sql
+<span class="keyword">SELECT</span> DatabaseName <span class="keyword">FROM</span> @results  <span class="comment">-- Read-only output</span></pre>
+            <p>The <code>INSERT @results</code> writes only to a local table variable scoped to the query batch -
+            it does not modify any permanent database tables.</p>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 3. REMOTE WRITE OPERATIONS -->
+<!-- ============================================================ -->
+<div class="card" id="sec3">
+    <div class="card-header safe" onclick="toggleSection('body3')">
+        <span><span class="section-icon">&#128421;</span> 3. Remote Write Operations <span class="badge badge-safe">NO RISK</span></span>
+        <span class="toggle" id="toggle-body3">&#9654;</span>
+    </div>
+    <div class="card-body" id="body3">
+        <div class="callout callout-safe">
+            <strong>Finding: Zero remote write operations</strong>
+            The script never creates, modifies, or deletes any files, registry keys, services, scheduled tasks,
+            or configurations on remote systems.
+        </div>
+        <div class="detail-box">
+            <h4>Remote Operations (All Read-Only)</h4>
+            <ul>
+                <li><code>Invoke-Command</code> scriptblocks contain only: <code>Get-ItemProperty</code> (registry reads),
+                    <code>Get-Service</code> (service enumeration), and SQL SELECT queries</li>
+                <li>No <code>Set-ItemProperty</code>, <code>New-Item</code>, <code>Set-Content</code>, or
+                    <code>Out-File</code> in any remote scriptblock</li>
+                <li>No <code>sp_configure</code>, <code>ALTER</code>, <code>CREATE</code>, or <code>DROP</code>
+                    statements sent to remote SQL Servers</li>
+                <li>No remote service start/stop/restart operations</li>
+                <li>No remote scheduled task creation</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 4. DESTRUCTIVE OPERATIONS -->
+<!-- ============================================================ -->
+<div class="card" id="sec4">
+    <div class="card-header safe" onclick="toggleSection('body4')">
+        <span><span class="section-icon">&#9888;&#65039;</span> 4. Destructive Operations <span class="badge badge-safe">NO RISK</span></span>
+        <span class="toggle" id="toggle-body4">&#9654;</span>
+    </div>
+    <div class="card-body" id="body4">
+        <div class="callout callout-safe">
+            <strong>Finding: No destructive commands found</strong>
+            The script contains no commands that could destroy data or cause irreversible damage.
+        </div>
+        <div class="detail-box">
+            <h4>Absence Confirmed</h4>
+            <ul>
+                <li>No <code>Remove-Item</code>, <code>Delete</code>, or file deletion commands</li>
+                <li>No <code>Clear-Content</code> or <code>Clear-Item</code></li>
+                <li>No <code>Format-Volume</code> or disk operations</li>
+                <li>No <code>Stop-Service</code>, <code>Stop-Process</code>, or <code>Restart-Computer</code></li>
+                <li>No <code>Uninstall-Module</code> or <code>Uninstall-Package</code></li>
+                <li>No SQL <code>DROP DATABASE</code>, <code>TRUNCATE TABLE</code>, or <code>SHUTDOWN</code></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 5. DANGEROUS COMMAND USAGE -->
+<!-- ============================================================ -->
+<div class="card" id="sec5">
+    <div class="card-header safe" onclick="toggleSection('body5')">
+        <span><span class="section-icon">&#128680;</span> 5. Dangerous Command Usage <span class="badge badge-safe">NO RISK</span></span>
+        <span class="toggle" id="toggle-body5">&#9654;</span>
+    </div>
+    <div class="card-body" id="body5">
+        <div class="callout callout-safe">
+            <strong>Finding: No dangerous execution patterns detected</strong>
+            The script does not use any dynamic code execution commands that could be exploited.
+        </div>
+        <div class="detail-box">
+            <h4>Absence Confirmed</h4>
+            <ul>
+                <li>No <code>Invoke-Expression</code> (iex) - the most common PowerShell attack vector</li>
+                <li>No <code>cmd.exe</code> or <code>cmd /c</code> subprocess calls</li>
+                <li>No <code>&amp;</code> operator used for dynamic invocation of untrusted strings</li>
+                <li>No <code>[ScriptBlock]::Create()</code> from user input</li>
+                <li>No <code>.NET Reflection</code> for arbitrary code execution</li>
+                <li>No <code>Add-Type</code> with inline C# code (only <code>Add-Type -AssemblyName System.Web</code> to load a standard library)</li>
+                <li>No <code>DownloadString</code>, <code>DownloadFile</code>, or <code>Invoke-WebRequest</code></li>
+                <li>No Base64 encoding/decoding of commands</li>
+            </ul>
+        </div>
+        <div class="detail-box">
+            <h4>Start-Process Usage (Line 2193)</h4>
+            <p>The only instance of <code>Start-Process</code> opens the final summary report in the default browser:</p>
+            <pre><span class="keyword">Start-Process</span> <span class="string">$summaryFile</span>  <span class="comment"># Opens local HTML file</span></pre>
+            <p>This is a standard pattern for opening generated reports. The file path is constructed internally
+            and cannot be influenced by remote data.</p>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 6. PERMISSION ESCALATION -->
+<!-- ============================================================ -->
+<div class="card" id="sec6">
+    <div class="card-header safe" onclick="toggleSection('body6')">
+        <span><span class="section-icon">&#128272;</span> 6. Permission Escalation <span class="badge badge-safe">NO RISK</span></span>
+        <span class="toggle" id="toggle-body6">&#9654;</span>
+    </div>
+    <div class="card-body" id="body6">
+        <div class="callout callout-safe">
+            <strong>Finding: No privilege escalation attempts</strong>
+            The script runs entirely within the current user's security context. It does not attempt
+            to elevate privileges, modify access controls, or impersonate other identities.
+        </div>
+        <div class="detail-box">
+            <h4>Absence Confirmed</h4>
+            <ul>
+                <li>No <code>RunAs</code> or <code>Start-Process -Verb RunAs</code> (elevation)</li>
+                <li>No <code>Set-Acl</code>, <code>icacls</code>, or permission modifications</li>
+                <li>No service account creation or manipulation</li>
+                <li>No Windows group membership changes</li>
+                <li>No SQL <code>GRANT</code>, <code>REVOKE</code>, or <code>DENY</code> statements</li>
+                <li>No SQL <code>ALTER LOGIN</code>, <code>CREATE LOGIN</code>, or <code>ALTER ROLE</code></li>
+                <li>No <code>#Requires -RunAsAdministrator</code> directive</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 7. NETWORK EXPOSURE -->
+<!-- ============================================================ -->
+<div class="card" id="sec7">
+    <div class="card-header safe" onclick="toggleSection('body7')">
+        <span><span class="section-icon">&#127760;</span> 7. Network Exposure <span class="badge badge-safe">NO RISK</span></span>
+        <span class="toggle" id="toggle-body7">&#9654;</span>
+    </div>
+    <div class="card-body" id="body7">
+        <div class="callout callout-safe">
+            <strong>Finding: No external network exposure</strong>
+            The script communicates only with internal domain-joined systems. It does not open listening
+            ports, connect to external services, or transmit data outside the local network.
+        </div>
+        <div class="detail-box">
+            <h4>Network Operations (Internal Only)</h4>
+            <ul>
+                <li><strong>TCP Port Scanning</strong> (lines 163-264): Outbound TCP connections to target servers
+                    on ports 1433, 1434, 2383, 4022 only. Uses short-lived TcpClient with 1-second timeout.
+                    No persistent connections.</li>
+                <li><strong>WinRM</strong> (lines 270-494): Uses standard Windows Remote Management (port 5985/5986)
+                    for Invoke-Command. This is a built-in Windows protocol authenticated by Kerberos.</li>
+                <li><strong>No listening ports</strong>: Script never calls <code>TcpListener</code>,
+                    <code>HttpListener</code>, or opens any server sockets.</li>
+                <li><strong>No external HTTP calls</strong>: No <code>Invoke-WebRequest</code>,
+                    <code>Invoke-RestMethod</code>, <code>WebClient</code>, or <code>HttpClient</code> usage.</li>
+                <li><strong>No DNS exfiltration</strong>: No <code>Resolve-DnsName</code> with crafted queries.</li>
+                <li><strong>No email</strong>: No <code>Send-MailMessage</code> or SMTP operations.</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 8. CREDENTIAL HANDLING -->
+<!-- ============================================================ -->
+<div class="card" id="sec8">
+    <div class="card-header low" onclick="toggleSection('body8')">
+        <span><span class="section-icon">&#128274;</span> 8. Credential Handling <span class="badge badge-low">LOW RISK</span></span>
+        <span class="toggle" id="toggle-body8">&#9654;</span>
+    </div>
+    <div class="card-body" id="body8">
+        <div class="callout callout-info">
+            <strong>Finding: Credentials stored in session memory only</strong>
+            Credentials are handled securely using PowerShell's built-in PSCredential/SecureString mechanism.
+            They are cached in a session-scoped hashtable for convenience but never persisted to disk.
+        </div>
+
+        <table>
+            <thead>
+                <tr><th>Aspect</th><th>Detail</th><th>Lines</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Credential Prompt</td>
+                    <td><code>Get-Credential</code> - standard PowerShell secure prompt with masked input</td>
+                    <td>322</td>
+                </tr>
+                <tr>
+                    <td>Storage</td>
+                    <td><code>$script:CredentialCache</code> hashtable - session memory only, garbage collected on exit</td>
+                    <td>303-304, 328</td>
+                </tr>
+                <tr>
+                    <td>Transmission</td>
+                    <td>Passed via <code>Invoke-Command -Credential</code> parameter (Kerberos/NTLM encrypted)</td>
+                    <td>288, 403</td>
+                </tr>
+                <tr>
+                    <td>Disk Persistence</td>
+                    <td><strong>None</strong> - credentials are never written to log files, reports, or any file</td>
+                    <td>-</td>
+                </tr>
+                <tr>
+                    <td>Credential Type</td>
+                    <td>Windows (domain) credentials only - SQL Auth was removed from the script</td>
+                    <td>296-330</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-warn">
+            <strong>Consideration</strong>
+            While credentials are stored using SecureString (encrypted in memory), they remain in the PowerShell
+            process memory until the session ends. On a shared workstation, another user with admin access could
+            theoretically dump the process memory. This is standard behavior for any PowerShell script using
+            PSCredential and is not unique to DBExplorer.
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 9. FILE SYSTEM IMPACT -->
+<!-- ============================================================ -->
+<div class="card" id="sec9">
+    <div class="card-header low" onclick="toggleSection('body9')">
+        <span><span class="section-icon">&#128193;</span> 9. File System Impact <span class="badge badge-low">LOW RISK</span></span>
+        <span class="toggle" id="toggle-body9">&#9654;</span>
+    </div>
+    <div class="card-body" id="body9">
+        <div class="callout callout-info">
+            <strong>Finding: Creates only local report and log files</strong>
+            The script writes files only to a user-specified output directory (default: <code>.\DBExplorer_Reports</code>).
+            All file operations are local to the machine running the script.
+        </div>
+
+        <table>
+            <thead>
+                <tr><th>Operation</th><th>Line</th><th>Details</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Create report directory</td>
+                    <td>1939</td>
+                    <td><code>New-Item -Path $reportDir -ItemType Directory -Force</code></td>
+                </tr>
+                <tr>
+                    <td>Create log directory</td>
+                    <td>1940</td>
+                    <td><code>New-Item -Path "$reportDir\Logs" -ItemType Directory -Force</code></td>
+                </tr>
+                <tr>
+                    <td>Write log entries</td>
+                    <td>112</td>
+                    <td><code>[System.IO.File]::AppendAllText($script:LogFile, ...)</code></td>
+                </tr>
+                <tr>
+                    <td>Write per-server HTML report</td>
+                    <td>1714</td>
+                    <td><code>[System.IO.File]::WriteAllText($filePath, $html, $utf8NoBom)</code></td>
+                </tr>
+                <tr>
+                    <td>Write summary HTML report</td>
+                    <td>1910</td>
+                    <td><code>[System.IO.File]::WriteAllText($filePath, $html, $utf8NoBom)</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="detail-box">
+            <h4>Safety Measures</h4>
+            <ul>
+                <li>Filenames are sanitized: <code>-replace '[\\/:*?"&lt;&gt;|]', '_'</code> (line 1711) prevents path traversal</li>
+                <li>Output path is resolved to an absolute path (line 1933-1934) preventing ambiguity</li>
+                <li>UTF-8 no-BOM encoding used throughout for maximum compatibility</li>
+                <li>No existing files are overwritten - each report has a unique timestamp in the filename</li>
+                <li>No file deletion operations anywhere in the script</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 10. SQL INJECTION RISK -->
+<!-- ============================================================ -->
+<div class="card" id="sec10">
+    <div class="card-header low" onclick="toggleSection('body10')">
+        <span><span class="section-icon">&#128137;</span> 10. SQL Injection Risk <span class="badge badge-low">LOW RISK</span></span>
+        <span class="toggle" id="toggle-body10">&#9654;</span>
+    </div>
+    <div class="card-body" id="body10">
+        <div class="callout callout-info">
+            <strong>Finding: Minimal injection surface with proper mitigations</strong>
+            Nearly all SQL queries are static strings with no user-provided input. The two instances of dynamic
+            SQL use <code>QUOTENAME()</code> and <code>REPLACE()</code> for safe identifier escaping.
+        </div>
+
+        <div class="detail-box">
+            <h4>Static Queries (No Injection Risk)</h4>
+            <p>The vast majority of SQL in the script is hardcoded SELECT statements against system views.
+            No user input is concatenated into these queries. Examples:</p>
+            <pre><span class="comment">-- Line 515: Server configuration (static query)</span>
+<span class="keyword">SELECT</span> name, CAST(value_in_use AS INT) AS value_in_use
+<span class="keyword">FROM</span> sys.configurations
+<span class="keyword">WHERE</span> name <span class="keyword">IN</span> (<span class="string">'xp_cmdshell'</span>, <span class="string">'clr enabled'</span>, ...)
+
+<span class="comment">-- Line 687: Server logins (static query)</span>
+<span class="keyword">SELECT</span> sp.name, sp.type_desc, ...
+<span class="keyword">FROM</span> sys.server_principals sp</pre>
+        </div>
+
+        <div class="detail-box">
+            <h4>Dynamic SQL (Properly Escaped)</h4>
+            <p>Two security assessment checks use dynamic SQL to iterate across databases. Both use
+            <code>QUOTENAME()</code> for identifier escaping and <code>REPLACE(name, '''', '''''')</code>
+            for string literal escaping:</p>
+            <pre><span class="comment">-- Guest access check (line 1060): QUOTENAME prevents injection</span>
+<span class="keyword">SELECT</span> @sql = @sql + <span class="string">'USE '</span> + <span class="keyword">QUOTENAME</span>(name) + <span class="string">'; ...'</span>
+<span class="keyword">FROM</span> sys.databases
+
+<span class="comment">-- Orphaned users check (line 1128): Same safe pattern</span>
+<span class="keyword">SELECT</span> @sql = @sql + <span class="string">'USE '</span> + <span class="keyword">QUOTENAME</span>(name) + <span class="string">'; ...'</span>
+<span class="keyword">FROM</span> sys.databases</pre>
+            <p>The database names come from <code>sys.databases</code> (a trusted source), not from user input.
+            <code>QUOTENAME()</code> wraps them in square brackets with proper escaping, preventing SQL injection
+            even if a database name contains malicious characters.</p>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 11. ERROR SUPPRESSION -->
+<!-- ============================================================ -->
+<div class="card" id="sec11">
+    <div class="card-header low" onclick="toggleSection('body11')">
+        <span><span class="section-icon">&#128260;</span> 11. Error Suppression <span class="badge badge-low">LOW RISK</span></span>
+        <span class="toggle" id="toggle-body11">&#9654;</span>
+    </div>
+    <div class="card-body" id="body11">
+        <div class="callout callout-info">
+            <strong>Finding: Minimal error suppression with good logging</strong>
+            The script uses <code>-ErrorAction SilentlyContinue</code> sparingly and only where failures are
+            expected and non-critical. All significant errors are caught and logged.
+        </div>
+
+        <table>
+            <thead>
+                <tr><th>Location</th><th>Lines</th><th>Justification</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>Get-ItemProperty -ErrorAction SilentlyContinue</code></td>
+                    <td>359</td>
+                    <td>Registry key may not exist on servers without SQL - expected failure</td>
+                </tr>
+                <tr>
+                    <td><code>Get-Service -ErrorAction SilentlyContinue</code></td>
+                    <td>376</td>
+                    <td>SQL services may not be installed - expected failure</td>
+                </tr>
+                <tr>
+                    <td><code>Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue</code></td>
+                    <td>1478, 1732</td>
+                    <td>Assembly may already be loaded - duplicate load is non-critical</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="detail-box">
+            <h4>Error Handling Pattern</h4>
+            <p>The script uses comprehensive try/catch blocks with <code>Write-Log</code> for error reporting.
+            The global <code>$ErrorActionPreference = "Continue"</code> (line 76) ensures errors are logged
+            without halting execution, which is appropriate for a multi-server inventory tool where one server's
+            failure should not prevent scanning of others.</p>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 12. LOG FILE CONTENTS -->
+<!-- ============================================================ -->
+<div class="card" id="sec12">
+    <div class="card-header low" onclick="toggleSection('body12')">
+        <span><span class="section-icon">&#128221;</span> 12. Log File Contents <span class="badge badge-low">LOW RISK</span></span>
+        <span class="toggle" id="toggle-body12">&#9654;</span>
+    </div>
+    <div class="card-body" id="body12">
+        <div class="callout callout-info">
+            <strong>Finding: Logs contain operational data only</strong>
+            Log files record timestamps, server names, and operation status messages. No credentials,
+            passwords, connection strings, or query results are written to logs.
+        </div>
+
+        <div class="detail-box">
+            <h4>Log Content Examples</h4>
+            <pre><span class="comment"># Typical log entries:</span>
+[2024-01-15 14:30:22] Starting DBExplorer...
+[2024-01-15 14:30:23] Found 12 computers in AD
+[2024-01-15 14:30:25] Scanning ports on SQL01...
+[2024-01-15 14:30:26]   Port 1433: Open
+[2024-01-15 14:30:28]   Running security assessment...
+[2024-01-15 14:30:30]   Report saved: SQL01_20240115_143030.html
+[2024-01-15 14:30:31] ERROR: Failed to connect to SQL02 - WinRM access denied</pre>
+        </div>
+
+        <div class="callout callout-warn">
+            <strong>Consideration</strong>
+            Log files contain server hostnames and port scan results, which could reveal infrastructure topology.
+            Restrict access to the output directory appropriately.
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 13. SENSITIVE DATA IN REPORTS -->
+<!-- ============================================================ -->
+<div class="card" id="sec13">
+    <div class="card-header medium" onclick="toggleSection('body13')">
+        <span><span class="section-icon">&#128451;</span> 13. Sensitive Data in Reports <span class="badge badge-medium">MEDIUM RISK</span></span>
+        <span class="toggle" id="toggle-body13">&#9654;</span>
+    </div>
+    <div class="card-body" id="body13">
+        <div class="callout callout-warn">
+            <strong>Finding: Reports contain security-sensitive inventory data</strong>
+            By design, DBExplorer generates detailed inventory reports that include information an attacker could
+            use to plan an attack. This is expected for a security assessment tool, but the reports themselves
+            must be treated as sensitive documents.
+        </div>
+
+        <table>
+            <thead>
+                <tr><th>Data Type</th><th>Found In</th><th>Example</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>SQL Server login names</td>
+                    <td>Server Security section</td>
+                    <td>sa, domain\svc_sql, app_user</td>
+                </tr>
+                <tr>
+                    <td>Windows service accounts</td>
+                    <td>Server Configuration section</td>
+                    <td>domain\sqlservice, NT SERVICE\MSSQLSERVER</td>
+                </tr>
+                <tr>
+                    <td>Database names and sizes</td>
+                    <td>Databases section</td>
+                    <td>Production_DB, 45.2 GB</td>
+                </tr>
+                <tr>
+                    <td>SQL Server versions (exact)</td>
+                    <td>Configuration section</td>
+                    <td>Specific build numbers may reveal unpatched vulnerabilities</td>
+                </tr>
+                <tr>
+                    <td>Security misconfigurations</td>
+                    <td>Security Assessment section</td>
+                    <td>xp_cmdshell enabled, sa account active, TRUSTWORTHY databases</td>
+                </tr>
+                <tr>
+                    <td>Sysadmin role members</td>
+                    <td>Server Security section</td>
+                    <td>List of accounts with full server control</td>
+                </tr>
+                <tr>
+                    <td>Infrastructure topology</td>
+                    <td>Summary report</td>
+                    <td>List of all SQL Server hostnames, ports, and instance names</td>
+                </tr>
+                <tr>
+                    <td>Backup status / schedules</td>
+                    <td>Backup Status section</td>
+                    <td>Last backup dates may reveal unprotected databases</td>
+                </tr>
+                <tr>
+                    <td>Agent job names</td>
+                    <td>Agent Jobs section</td>
+                    <td>May reveal business processes or third-party tools</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-danger">
+            <strong>Recommendation: Protect Report Files</strong>
+            <ul style="margin-top: 8px; padding-left: 20px;">
+                <li>Store reports in a restricted directory with appropriate NTFS permissions</li>
+                <li>Do not email reports or store them on shared drives without access controls</li>
+                <li>Delete reports after review if they are no longer needed</li>
+                <li>Consider the reports as confidential security documentation</li>
+                <li>The security assessment findings are particularly sensitive as they highlight exploitable weaknesses</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 14. HTML OUTPUT SAFETY -->
+<!-- ============================================================ -->
+<div class="card" id="sec14">
+    <div class="card-header safe" onclick="toggleSection('body14')">
+        <span><span class="section-icon">&#127912;</span> 14. HTML Output Safety (XSS Prevention) <span class="badge badge-safe">NO RISK</span></span>
+        <span class="toggle" id="toggle-body14">&#9654;</span>
+    </div>
+    <div class="card-body" id="body14">
+        <div class="callout callout-safe">
+            <strong>Finding: All dynamic content is properly HTML-encoded</strong>
+            The script uses <code>[System.Web.HttpUtility]::HtmlEncode()</code> on all values inserted into
+            HTML output, preventing cross-site scripting (XSS) in generated reports.
+        </div>
+
+        <div class="detail-box">
+            <h4>Encoding Points Verified</h4>
+            <ul>
+                <li><strong>ConvertTo-HtmlTable</strong> (line 1251): All table cell values are encoded via
+                    <code>[System.Web.HttpUtility]::HtmlEncode($val)</code></li>
+                <li><strong>Table headers</strong> (line 1211): Property names encoded</li>
+                <li><strong>Server names</strong> (lines 1509, 1522): Encoded in report titles and headers</li>
+                <li><strong>SQL version/edition strings</strong> (lines 1526, 1530): Encoded</li>
+                <li><strong>Database names</strong> (line 1656): Encoded in section headers</li>
+                <li><strong>Error messages</strong> (line 1695): Encoded before HTML insertion</li>
+                <li><strong>File paths</strong> (line 1860): Encoded in summary report links</li>
+            </ul>
+        </div>
+
+        <p>This means that even if a SQL Server has a malicious database name like
+        <code>&lt;script&gt;alert('xss')&lt;/script&gt;</code>, it would be rendered as harmless text
+        in the HTML report rather than executed as JavaScript.</p>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 15. COMPLETE FILE WRITE INVENTORY -->
+<!-- ============================================================ -->
+<div class="card" id="sec15">
+    <div class="card-header safe" onclick="toggleSection('body15')">
+        <span><span class="section-icon">&#128196;</span> 15. Complete File Write Inventory <span class="badge badge-none">REFERENCE</span></span>
+        <span class="toggle" id="toggle-body15">&#9654;</span>
+    </div>
+    <div class="card-body" id="body15">
+        <p>Every file write operation in the entire 2,204-line script is listed below. There are exactly
+        <strong>5 file write operations</strong>, all local:</p>
+
+        <table>
+            <thead>
+                <tr><th>#</th><th>Line</th><th>Operation</th><th>Target</th><th>Purpose</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>1</td>
+                    <td>112</td>
+                    <td><code>AppendAllText</code></td>
+                    <td><code>$script:LogFile</code></td>
+                    <td>Append timestamped log entry</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td>1714</td>
+                    <td><code>WriteAllText</code></td>
+                    <td><code>$reportDir\$computerName_*.html</code></td>
+                    <td>Write per-server HTML report</td>
+                </tr>
+                <tr>
+                    <td>3</td>
+                    <td>1910</td>
+                    <td><code>WriteAllText</code></td>
+                    <td><code>$reportDir\Summary_*.html</code></td>
+                    <td>Write summary HTML report</td>
+                </tr>
+                <tr>
+                    <td>4</td>
+                    <td>1939</td>
+                    <td><code>New-Item -Directory</code></td>
+                    <td><code>$reportDir</code></td>
+                    <td>Create report output directory</td>
+                </tr>
+                <tr>
+                    <td>5</td>
+                    <td>1940</td>
+                    <td><code>New-Item -Directory</code></td>
+                    <td><code>$reportDir\Logs</code></td>
+                    <td>Create log subdirectory</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- 16. COMPLETE NETWORK OPERATION INVENTORY -->
+<!-- ============================================================ -->
+<div class="card" id="sec16">
+    <div class="card-header safe" onclick="toggleSection('body16')">
+        <span><span class="section-icon">&#128225;</span> 16. Complete Network Operation Inventory <span class="badge badge-none">REFERENCE</span></span>
+        <span class="toggle" id="toggle-body16">&#9654;</span>
+    </div>
+    <div class="card-body" id="body16">
+        <p>Every network operation in the entire script is listed below. All communications are
+        <strong>internal, authenticated, and read-only</strong>:</p>
+
+        <table>
+            <thead>
+                <tr><th>Type</th><th>Lines</th><th>Protocol</th><th>Direction</th><th>Purpose</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>AD Query</td>
+                    <td>134-148</td>
+                    <td>LDAP</td>
+                    <td>Outbound to DC</td>
+                    <td>Get-ADComputer to discover servers</td>
+                </tr>
+                <tr>
+                    <td>Port Scan</td>
+                    <td>184-189</td>
+                    <td>TCP</td>
+                    <td>Outbound to targets</td>
+                    <td>TcpClient.BeginConnect to SQL ports</td>
+                </tr>
+                <tr>
+                    <td>WinRM Test</td>
+                    <td>288</td>
+                    <td>WinRM (HTTP/S)</td>
+                    <td>Outbound to targets</td>
+                    <td>Invoke-Command test connectivity</td>
+                </tr>
+                <tr>
+                    <td>SQL Instance Detection</td>
+                    <td>344-396</td>
+                    <td>WinRM (HTTP/S)</td>
+                    <td>Outbound to targets</td>
+                    <td>Remote registry + service queries</td>
+                </tr>
+                <tr>
+                    <td>SQL Query Execution</td>
+                    <td>432-494</td>
+                    <td>WinRM (HTTP/S)</td>
+                    <td>Outbound to targets</td>
+                    <td>Invoke-Command with SQL queries</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="detail-box">
+            <h4>Authentication</h4>
+            <ul>
+                <li><strong>WinRM</strong>: Kerberos (default) or NTLM - encrypted, domain-authenticated</li>
+                <li><strong>SQL</strong>: Integrated Security (SSPI) via WinRM context - no SQL passwords</li>
+                <li><strong>AD</strong>: Current user's Kerberos ticket</li>
+                <li>No plaintext credentials transmitted over the network</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+</div><!-- end container -->
+
+<div class="footer">
+    DBExplorer Safety Assessment Report &bull; Generated by code review analysis &bull; Script version: 2,204 lines / 19 functions
+</div>
+
+<script>
+function toggleSection(id) {
+    var body = document.getElementById(id);
+    var toggle = document.getElementById('toggle-' + id);
+    if (body.classList.contains('active')) {
+        body.classList.remove('active');
+        if (toggle) toggle.classList.remove('open');
+    } else {
+        body.classList.add('active');
+        if (toggle) toggle.classList.add('open');
+    }
+}
+
+function expandAll() {
+    var bodies = document.querySelectorAll('.card-body');
+    var toggles = document.querySelectorAll('.toggle');
+    for (var i = 0; i < bodies.length; i++) bodies[i].classList.add('active');
+    for (var i = 0; i < toggles.length; i++) toggles[i].classList.add('open');
+}
+
+function collapseAll() {
+    var bodies = document.querySelectorAll('.card-body');
+    var toggles = document.querySelectorAll('.toggle');
+    for (var i = 0; i < bodies.length; i++) bodies[i].classList.remove('active');
+    for (var i = 0; i < toggles.length; i++) toggles[i].classList.remove('open');
+}
+
+// Auto-expand the executive summary on load
+document.addEventListener('DOMContentLoaded', function() {
+    // Executive summary is already expanded via 'active' class in HTML
+    // Also auto-expand the sensitive data section since it's MEDIUM risk
+    toggleSection('body13');
+});
+</script>
+
+</body>
+</html>
