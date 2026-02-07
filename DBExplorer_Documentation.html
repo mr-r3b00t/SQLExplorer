@@ -330,10 +330,11 @@
         <a href="#phase4"><span class="toc-num">7</span> Phase 4: SQL Instance Detection</a>
         <a href="#phase5"><span class="toc-num">8</span> Phase 5: SQL Inventory</a>
         <a href="#security-assessment"><span class="toc-num">9</span> Security Vulnerability Assessment</a>
-        <a href="#sql-queries"><span class="toc-num">10</span> SQL Queries Reference</a>
-        <a href="#reports"><span class="toc-num">11</span> HTML Report Generation</a>
-        <a href="#error-handling"><span class="toc-num">12</span> Error Handling</a>
-        <a href="#function-ref"><span class="toc-num">13</span> Function Reference</a>
+        <a href="#kill-chain"><span class="toc-num">10</span> Kill Chain / Exploitability Assessment</a>
+        <a href="#sql-queries"><span class="toc-num">11</span> SQL Queries Reference</a>
+        <a href="#reports"><span class="toc-num">12</span> HTML Report Generation</a>
+        <a href="#error-handling"><span class="toc-num">13</span> Error Handling</a>
+        <a href="#function-ref"><span class="toc-num">14</span> Function Reference</a>
     </div>
 </div>
 
@@ -345,7 +346,7 @@
         <h2>1. Architecture Overview</h2>
     </div>
     <div class="card-body">
-        <p>DBExplorer is a <strong>single self-contained .ps1 file</strong> (~2,200 lines) designed to run from any domain-joined Windows PC. It has zero external dependencies beyond the built-in ActiveDirectory RSAT module and standard PowerShell remoting (WinRM). All SQL queries execute on the remote servers, so no SQL client tools are needed on the scanning machine.</p>
+        <p>DBExplorer is a <strong>single self-contained .ps1 file</strong> (~3,100 lines) designed to run from any domain-joined Windows PC. It has zero external dependencies beyond the built-in ActiveDirectory RSAT module and standard PowerShell remoting (WinRM). All SQL queries execute on the remote servers, so no SQL client tools are needed on the scanning machine.</p>
 
         <div class="arch-layer layer-1">
             <div class="arch-label">Entry Point</div>
@@ -386,6 +387,7 @@
                 <span class="arch-chip">Get-SQLDatabaseSecurity</span>
                 <span class="arch-chip">Get-SQLAgentJobs</span>
                 <span class="arch-chip">Get-SQLSecurityAssessment</span>
+                <span class="arch-chip">Get-SQLKillChainAssessment</span>
             </div>
         </div>
         <div class="arch-layer layer-6">
@@ -463,7 +465,7 @@
 <div class="card" id="execution-flow">
     <div class="card-header">
         <h2>3. Execution Flow</h2>
-        <span class="badge badge-phase">Lines 1919-2199</span>
+        <span class="badge badge-phase">Lines 2803-3112</span>
     </div>
     <div class="card-body">
         <p>The <code>Invoke-DBExplorer</code> function orchestrates 5 sequential phases:</p>
@@ -502,7 +504,7 @@
 
         <div class="callout callout-tip">
             <strong>Per-Server Loop (Phase 3)</strong>
-            For each SQL host, the script: tests WinRM &rarr; prompts for credentials if needed &rarr; detects instances via registry/services &rarr; runs 7 categories of SQL queries &rarr; enumerates per-database security for every ONLINE database &rarr; runs a security vulnerability assessment &rarr; generates an HTML report. If any step fails, the error is logged and the script continues to the next step or server.
+            For each SQL host, the script: tests WinRM &rarr; prompts for credentials if needed &rarr; detects instances via registry/services &rarr; runs 7 categories of SQL queries &rarr; enumerates per-database security for every ONLINE database &rarr; runs a security vulnerability assessment &rarr; runs a kill chain / exploitability assessment &rarr; generates an HTML report. If any step fails, the error is logged and the script continues to the next step or server.
         </div>
     </div>
 </div>
@@ -646,10 +648,10 @@
     <div class="card-header">
         <h2>8. Phase 5: SQL Inventory Collection</h2>
         <span class="badge badge-core">Core Logic</span>
-        <span class="badge badge-phase">Lines 416-1180</span>
+        <span class="badge badge-phase">Lines 416-1991</span>
     </div>
     <div class="card-body">
-        <p>For each detected instance, the script collects 7 categories of data through the <code>Invoke-RemoteSQLQuery</code> function:</p>
+        <p>For each detected instance, the script collects 8 categories of data through the <code>Invoke-RemoteSQLQuery</code> function:</p>
 
         <p><strong>The <code>Invoke-RemoteSQLQuery</code> function (lines 416-495)</strong> is the central query execution engine. It:</p>
         <ol style="margin-left: 20px; font-size: 14px;">
@@ -709,6 +711,12 @@
                     <td>Automated vulnerability checks: xp_cmdshell, CLR, OLE Automation, TRUSTWORTHY databases, sa account status, sysadmin count, BUILTIN\Administrators, guest access, orphaned users, password policy, cross-db ownership chaining, mixed auth mode. Each finding includes severity (Critical/Warning/Info), detail, and remediation.</td>
                     <td class="lines">895-1180</td>
                 </tr>
+                <tr>
+                    <td><strong>Kill Chain Assessment</strong></td>
+                    <td><code>Get-SQLKillChainAssessment</code></td>
+                    <td>Cross-references all inventory data and runs 8 additional SQL queries to evaluate 16 real-world attack paths across 5 kill chain phases (Execution, Privilege Escalation, Lateral Movement, Persistence, Credential Access). Each path is classified as Exploitable, Partially Exploitable, or Mitigated based on actual server state.</td>
+                    <td class="lines">1182-1991</td>
+                </tr>
             </tbody>
         </table>
 
@@ -765,10 +773,81 @@
     </div>
 </div>
 
-<!-- 10. SQL Queries Reference -->
+<!-- 10. Kill Chain / Exploitability Assessment -->
+<div class="card" id="kill-chain">
+    <div class="card-header">
+        <h2>10. Kill Chain / Exploitability Assessment</h2>
+        <span class="badge badge-security">New</span>
+        <span class="badge badge-func">Get-SQLKillChainAssessment</span>
+        <span class="badge badge-phase">Lines 1182-1991</span>
+    </div>
+    <div class="card-body">
+        <p>Beyond individual security findings, the kill chain assessment evaluates whether findings <strong>combine into exploitable attack paths</strong> that a threat actor could actually use. The <code>Get-SQLKillChainAssessment</code> function cross-references all previously collected inventory data and runs 8 additional SQL queries to evaluate 16 attack paths across 5 kill chain phases.</p>
+
+        <p>Each attack path is classified based on actual server state:</p>
+        <ul style="margin: 10px 0 16px 20px; font-size: 14px;">
+            <li><strong style="color:#dc3545;">Exploitable</strong> &mdash; All prerequisites met; path is immediately actionable by an attacker</li>
+            <li><strong style="color:#ffc107;">Partially Exploitable</strong> &mdash; Some prerequisites met; attacker needs one more step</li>
+            <li><strong style="color:#28a745;">Mitigated</strong> &mdash; Key prerequisite not met; path is blocked</li>
+        </ul>
+
+        <h3 style="font-size: 16px; margin: 20px 0 12px; color: #1a237e;">Additional SQL Queries (8 new)</h3>
+        <p>The function runs these additional read-only queries beyond what the existing inventory collects:</p>
+
+        <table class="func-table">
+            <thead><tr><th>Query</th><th>System Objects</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr><td>Linked Servers</td><td><code>sys.servers</code> + <code>sys.linked_logins</code></td><td>Discover linked servers with RPC-out enabled, saved credentials, self-credential mapping</td></tr>
+                <tr><td>Dangerous Job Steps</td><td><code>msdb.dbo.sysjobsteps</code></td><td>Find agent job steps using CmdExec, PowerShell, SSIS, or ActiveScripting subsystems</td></tr>
+                <tr><td>Impersonation Perms</td><td><code>sys.server_permissions</code></td><td>Identify IMPERSONATE permissions with target-is-sysadmin check</td></tr>
+                <tr><td>Startup Procedures</td><td><code>sys.procedures</code></td><td>Find procedures marked for auto-execution at SQL Server startup</td></tr>
+                <tr><td>EXECUTE AS Procedures</td><td>Dynamic SQL across databases</td><td>Find stored procedures using EXECUTE AS with elevated principals</td></tr>
+                <tr><td>Server Triggers</td><td><code>sys.server_triggers</code></td><td>Enumerate enabled server-level DDL triggers</td></tr>
+                <tr><td>Database-Scoped Credentials</td><td>Dynamic SQL across databases</td><td>Find stored credentials in database-scoped credential objects</td></tr>
+                <tr><td>xp_cmdshell EXECUTE Perms</td><td><code>sys.server_permissions</code></td><td>Check for explicit EXECUTE grants on xp_cmdshell</td></tr>
+            </tbody>
+        </table>
+
+        <h3 style="font-size: 16px; margin: 24px 0 12px; color: #1a237e;">Attack Paths by Kill Chain Phase (16 total)</h3>
+
+        <table class="func-table">
+            <thead><tr><th>Phase</th><th>Attack Path</th><th>Key Prerequisites</th></tr></thead>
+            <tbody>
+                <tr><td rowspan="4"><strong>Execution</strong></td><td>xp_cmdshell RCE</td><td>xp_cmdshell enabled + sysadmin access or explicit EXECUTE grant</td></tr>
+                <tr><td>OLE Automation RCE</td><td>OLE Automation enabled + sysadmin access</td></tr>
+                <tr><td>CLR Assembly Execution</td><td>CLR enabled + TRUSTWORTHY database + db_owner in that database</td></tr>
+                <tr><td>Agent Job Command Execution</td><td>CmdExec/PowerShell job steps + sysadmin-owned jobs</td></tr>
+                <tr><td rowspan="4"><strong>Privilege Escalation</strong></td><td>TRUSTWORTHY db_owner to sysadmin</td><td>TRUSTWORTHY database + non-sysadmin db_owner</td></tr>
+                <tr><td>Login Impersonation to Sysadmin</td><td>IMPERSONATE permission on a sysadmin login</td></tr>
+                <tr><td>Service Account Exploitation</td><td>High-privilege service account + xp_cmdshell or CLR enabled</td></tr>
+                <tr><td>Cross-Database Ownership Chaining</td><td>Cross-DB chaining enabled + EXECUTE AS OWNER procedures</td></tr>
+                <tr><td rowspan="3"><strong>Lateral Movement</strong></td><td>Linked Server Pivot</td><td>Linked servers with RPC-out + saved credentials or self-credential</td></tr>
+                <tr><td>Ad Hoc Distributed Queries</td><td>Ad Hoc Queries enabled + sysadmin or CONTROL SERVER</td></tr>
+                <tr><td>Database Mail Exfiltration</td><td>Database Mail enabled + users with sp_send_dbmail access</td></tr>
+                <tr><td rowspan="3"><strong>Persistence</strong></td><td>Startup Procedure Persistence</td><td>scan for startup procs enabled + startup procedures exist</td></tr>
+                <tr><td>SQL Agent Job Persistence</td><td>SQL Agent running + sysadmin access to create jobs</td></tr>
+                <tr><td>Trigger-based Persistence</td><td>Enabled server-level DDL triggers exist</td></tr>
+                <tr><td rowspan="2"><strong>Credential Access</strong></td><td>SA Account Brute Force</td><td>sa enabled + mixed auth mode + no password policy</td></tr>
+                <tr><td>Credential Harvesting</td><td>Linked server saved creds, job step cleartext creds, or database-scoped credentials</td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-info" style="margin-top: 14px;">
+            <strong>Data Cross-Referencing</strong>
+            The kill chain assessment receives all previously collected inventory data (SecurityFindings, ServerConfig, ServerSecurity, DatabaseSecurity, AgentJobs) as parameters to avoid redundant SQL queries. It only executes 8 new queries for data not already collected, such as linked server configurations, impersonation permissions, and server triggers.
+        </div>
+
+        <div class="callout callout-tip" style="margin-top: 14px;">
+            <strong>Report Integration</strong>
+            Results appear in the per-server report as a new "Kill Chain Assessment" section (between Security Assessment and Server Configuration) with two sub-tables: a Phase Summary table showing exploit counts per kill chain phase, and an Attack Path Details table with full prerequisites, current state, impact, and remediation for each path. The section auto-expands if any Exploitable paths are found.
+        </div>
+    </div>
+</div>
+
+<!-- 11. SQL Queries Reference -->
 <div class="card" id="sql-queries">
     <div class="card-header">
-        <h2>10. SQL Queries Reference</h2>
+        <h2>11. SQL Queries Reference</h2>
         <span class="badge badge-core">T-SQL</span>
     </div>
     <div class="card-body">
@@ -790,17 +869,25 @@
                 <tr><td>Agent Jobs</td><td><code>msdb.dbo.sysjobs</code> + <code>msdb.dbo.sysjobhistory</code></td><td>Job list with most recent run status</td></tr>
                 <tr><td>Security Assessment</td><td><code>sys.configurations</code>, <code>sys.sql_logins</code>, <code>sys.server_role_members</code>, <code>sys.databases</code></td><td>xp_cmdshell, CLR, OLE Automation, TRUSTWORTHY, sa status, sysadmin count</td></tr>
                 <tr><td>Security Assessment</td><td><code>sys.server_principals</code>, <code>sys.server_permissions</code>, <code>sys.database_permissions</code></td><td>BUILTIN\Administrators, public permissions, guest access, orphaned users</td></tr>
+                <tr><td>Kill Chain - Linked Servers</td><td><code>sys.servers</code>, <code>sys.linked_logins</code></td><td>Linked server configs with RPC-out status, saved credentials</td></tr>
+                <tr><td>Kill Chain - Job Steps</td><td><code>msdb.dbo.sysjobsteps</code></td><td>Dangerous job steps (CmdExec, PowerShell, SSIS, ActiveScripting subsystems)</td></tr>
+                <tr><td>Kill Chain - Impersonation</td><td><code>sys.server_permissions</code>, <code>sys.server_role_members</code></td><td>IMPERSONATE permissions with sysadmin target check</td></tr>
+                <tr><td>Kill Chain - Startup Procs</td><td><code>sys.procedures</code></td><td>Procedures marked for auto-execution at startup</td></tr>
+                <tr><td>Kill Chain - EXECUTE AS</td><td><code>sys.procedures</code>, <code>sys.database_principals</code> (dynamic SQL)</td><td>Stored procedures with EXECUTE AS elevated principals</td></tr>
+                <tr><td>Kill Chain - Server Triggers</td><td><code>sys.server_triggers</code></td><td>Enabled server-level DDL triggers for persistence detection</td></tr>
+                <tr><td>Kill Chain - DB Credentials</td><td><code>sys.database_scoped_credentials</code> (dynamic SQL)</td><td>Database-scoped credential objects across all databases</td></tr>
+                <tr><td>Kill Chain - xp_cmdshell Perms</td><td><code>sys.server_permissions</code></td><td>Explicit EXECUTE grants on xp_cmdshell extended procedure</td></tr>
             </tbody>
         </table>
     </div>
 </div>
 
-<!-- 10. HTML Reports -->
+<!-- 12. HTML Reports -->
 <div class="card" id="reports">
     <div class="card-header">
-        <h2>11. HTML Report Generation</h2>
+        <h2>12. HTML Report Generation</h2>
         <span class="badge badge-report">Output</span>
-        <span class="badge badge-phase">Lines 1184-1915</span>
+        <span class="badge badge-phase">Lines 1995-2800</span>
     </div>
     <div class="card-body">
         <p>Reports are fully self-contained HTML files with embedded CSS and JavaScript &mdash; no external dependencies, works offline. Two types of reports are generated:</p>
@@ -822,6 +909,17 @@
                     <li><span style="color:#28a745;font-weight:600;">Info</span> = Database Mail XPs, Remote DAC</li>
                 </ul>
                 Section header shows finding summary (e.g., "3 Critical, 5 Warning, 1 Info"). Auto-expands when Critical findings are present.
+            </div>
+        </div>
+        <div class="report-section-demo">
+            <div class="rsd-header" style="border-left-color: #e65100;">Kill Chain Assessment <span class="rsd-tag" style="background:#fff3e0;color:#e65100;">Auto-expands if Exploitable</span></div>
+            <div class="rsd-body">
+                Cross-references security findings, server configuration, and 8 additional SQL queries to evaluate 16 real-world attack paths across 5 kill chain phases. Two sub-tables:
+                <ul>
+                    <li><strong>Kill Chain Phase Summary</strong> &mdash; Phase name, exploitable/partial/mitigated counts, overall risk, key findings</li>
+                    <li><strong>Attack Path Details</strong> &mdash; Each of 16 paths with kill chain phase, exploitability status (color-coded), prerequisites, current state, impact, and remediation</li>
+                </ul>
+                Dashboard includes an "Exploitable Paths" metric card (red if any exploitable, green if all mitigated).
             </div>
         </div>
         <div class="report-section-demo">
@@ -867,8 +965,8 @@
         <h3 style="font-size: 16px; margin: 24px 0 12px; color: #1a237e;">Summary Report</h3>
         <p>Filename pattern: <code>Summary_yyyyMMdd_HHmmss.html</code></p>
         <ul style="margin-left: 20px; font-size: 14px;">
-            <li>Dashboard: total computers scanned, SQL hosts found, successfully inventoried, failed count, <strong>total security findings</strong> (color-coded)</li>
-            <li>Server table: name, version, edition, DB count, total size, backup health, <strong>security status</strong> (Critical/Warning/Clean with color coding), link to per-server report</li>
+            <li>Dashboard: total computers scanned, SQL hosts found, successfully inventoried, failed count, <strong>total security findings</strong> (color-coded), <strong>exploitable kill chains</strong> (color-coded)</li>
+            <li>Server table: name, version, edition, DB count, total size, backup health, <strong>security status</strong> (Critical/Warning/Clean with color coding), <strong>kill chains</strong> (exploitable count with color coding), link to per-server report</li>
             <li>Failed/skipped servers section (if any): server name + failure reason</li>
         </ul>
 
@@ -882,7 +980,7 @@
             <thead><tr><th>Function</th><th>Purpose</th></tr></thead>
             <tbody>
                 <tr><td><code>Get-HtmlHeader</code></td><td>Returns the shared HTML preamble: DOCTYPE, charset, full CSS stylesheet (~180 lines), JavaScript toggle/expand/collapse functions. Does NOT close <code>&lt;/head&gt;</code> so callers can insert <code>&lt;title&gt;</code>.</td></tr>
-                <tr><td><code>ConvertTo-HtmlTable</code></td><td>Generic function converting any <code>PSObject[]</code> to a styled HTML table. Accepts explicit property list, filters out PS metadata properties, applies conditional color coding for backup days, job status, disabled flags, and security severity levels (Critical/Warning/Info). HTML-encodes all values.</td></tr>
+                <tr><td><code>ConvertTo-HtmlTable</code></td><td>Generic function converting any <code>PSObject[]</code> to a styled HTML table. Accepts explicit property list, filters out PS metadata properties, applies conditional color coding for backup days, job status, disabled flags, security severity levels (Critical/Warning/Info), kill chain exploitability status (Exploitable/Partially Exploitable/Mitigated), and phase risk levels. HTML-encodes all values.</td></tr>
                 <tr><td><code>New-ServerReport</code></td><td>Assembles the full per-server HTML. Extracts metrics from inventory data, builds each section using here-strings and <code>ConvertTo-HtmlTable</code> calls, writes to disk.</td></tr>
                 <tr><td><code>New-SummaryReport</code></td><td>Builds the index page. Calculates aggregate metrics, builds server rows with hyperlinks to per-server reports, includes failed servers section.</td></tr>
             </tbody>
@@ -890,10 +988,10 @@
     </div>
 </div>
 
-<!-- 11. Error Handling -->
+<!-- 13. Error Handling -->
 <div class="card" id="error-handling">
     <div class="card-header">
-        <h2>12. Error Handling Strategy</h2>
+        <h2>13. Error Handling Strategy</h2>
     </div>
     <div class="card-body">
         <p>The script uses layered error handling to maximize data collection even when individual components fail:</p>
@@ -934,10 +1032,10 @@
     </div>
 </div>
 
-<!-- 12. Function Reference -->
+<!-- 14. Function Reference -->
 <div class="card" id="function-ref">
     <div class="card-header">
-        <h2>13. Complete Function Reference</h2>
+        <h2>14. Complete Function Reference</h2>
     </div>
     <div class="card-body">
         <table class="func-table">
@@ -948,7 +1046,7 @@
                 <tr><td><code>Invoke-ParallelPortScan</code></td><td>Port Scanner</td><td class="lines">163-264</td><td>Runspace pool TCP port scanner with async sockets, configurable threads and timeout</td></tr>
                 <tr><td><code>Test-WinRMAccess</code></td><td>WinRM &amp; Credentials</td><td class="lines">270-294</td><td>Quick WinRM connectivity test via Invoke-Command</td></tr>
                 <tr><td><code>Get-CredentialFallback</code></td><td>WinRM &amp; Credentials</td><td class="lines">296-330</td><td>Interactive credential prompt with Windows/Skip options, per-server caching</td></tr>
-                <tr><td><code>Get-SQLInstances</code></td><td>SQL Instance Detection</td><td class="lines">336-410</td><td>Remote registry + service enumeration to find SQL instances</td></tr>
+                <tr><td><code>Get-SQLInstances</code></td><td>SQL Instance Detection</td><td class="lines">336-412</td><td>Remote registry + service enumeration to find SQL instances</td></tr>
                 <tr><td><code>Invoke-RemoteSQLQuery</code></td><td>SQL Inventory</td><td class="lines">416-495</td><td>Core query engine: WinRM &rarr; Invoke-Sqlcmd or .NET SqlClient fallback (Integrated Security)</td></tr>
                 <tr><td><code>Get-SQLServerConfig</code></td><td>SQL Inventory</td><td class="lines">497-583</td><td>Collect server properties, sys.configurations, services, uptime</td></tr>
                 <tr><td><code>Get-SQLDatabases</code></td><td>SQL Inventory</td><td class="lines">585-634</td><td>Database inventory with sizes, state, recovery model, settings</td></tr>
@@ -957,11 +1055,12 @@
                 <tr><td><code>Get-SQLDatabaseSecurity</code></td><td>SQL Inventory</td><td class="lines">753-845</td><td>Per-database users, role memberships, explicit permissions</td></tr>
                 <tr><td><code>Get-SQLAgentJobs</code></td><td>SQL Inventory</td><td class="lines">847-893</td><td>Agent jobs with last execution status via OUTER APPLY</td></tr>
                 <tr><td><code>Get-SQLSecurityAssessment</code></td><td>SQL Inventory</td><td class="lines">895-1180</td><td>Automated vulnerability assessment: 10 check categories covering dangerous configs, auth mode, sa status, sysadmin count, TRUSTWORTHY, guest access, BUILTIN\Admins, public permissions, orphaned users, password policy. Returns findings with severity, detail, and remediation.</td></tr>
-                <tr><td><code>ConvertTo-HtmlTable</code></td><td>HTML Report</td><td class="lines">1186-1260</td><td>Generic PSObject-to-HTML table converter with conditional color coding (backup days, job status, severity levels)</td></tr>
-                <tr><td><code>Get-HtmlHeader</code></td><td>HTML Report</td><td class="lines">1262-1464</td><td>Shared HTML/CSS/JS preamble (leaves &lt;head&gt; unclosed for title injection)</td></tr>
-                <tr><td><code>New-ServerReport</code></td><td>HTML Report</td><td class="lines">1466-1717</td><td>Assemble and write per-server HTML report with all inventory sections including security assessment</td></tr>
-                <tr><td><code>New-SummaryReport</code></td><td>HTML Report</td><td class="lines">1719-1913</td><td>Assemble and write summary index with server table, aggregate metrics, security status, failed list</td></tr>
-                <tr><td><code>Invoke-DBExplorer</code></td><td>Main Orchestration</td><td class="lines">1919-2199</td><td>Entry point: banner, directory setup, 5-phase workflow, final console summary, open browser</td></tr>
+                <tr><td><code>Get-SQLKillChainAssessment</code></td><td>SQL Inventory</td><td class="lines">1182-1991</td><td>Cross-references inventory data + 8 new SQL queries to evaluate 16 attack paths across 5 kill chain phases (Execution, Privilege Escalation, Lateral Movement, Persistence, Credential Access). Classifies each as Exploitable/Partially Exploitable/Mitigated.</td></tr>
+                <tr><td><code>ConvertTo-HtmlTable</code></td><td>HTML Report</td><td class="lines">1997-2083</td><td>Generic PSObject-to-HTML table converter with conditional color coding (backup days, job status, severity levels, exploitability status)</td></tr>
+                <tr><td><code>Get-HtmlHeader</code></td><td>HTML Report</td><td class="lines">2087-2289</td><td>Shared HTML/CSS/JS preamble (leaves &lt;head&gt; unclosed for title injection)</td></tr>
+                <tr><td><code>New-ServerReport</code></td><td>HTML Report</td><td class="lines">2291-2581</td><td>Assemble and write per-server HTML report with all inventory sections including security assessment and kill chain assessment</td></tr>
+                <tr><td><code>New-SummaryReport</code></td><td>HTML Report</td><td class="lines">2583-2797</td><td>Assemble and write summary index with server table, aggregate metrics, security status, kill chain status, failed list</td></tr>
+                <tr><td><code>Invoke-DBExplorer</code></td><td>Main Orchestration</td><td class="lines">2803-3112</td><td>Entry point: banner, directory setup, 5-phase workflow, final console summary, open browser</td></tr>
             </tbody>
         </table>
 

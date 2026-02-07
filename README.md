@@ -2,7 +2,7 @@
 
 **Active Directory MSSQL Discovery, Inventory & Security Assessment Tool**
 
-A single-file PowerShell script that discovers SQL Server instances across your Active Directory domain, inventories their configuration via WinRM, performs a security vulnerability assessment, and generates self-contained HTML reports.
+A single-file PowerShell script that discovers SQL Server instances across your Active Directory domain, inventories their configuration via WinRM, performs a security vulnerability assessment with kill chain analysis, and generates self-contained HTML reports.
 
 ---
 
@@ -15,7 +15,8 @@ SQLExplorer automates the entire SQL Server discovery and auditing workflow:
 3. **Connects via WinRM** and detects all SQL Server instances (default + named)
 4. **Inventories** server configuration, databases, backups, security model, and agent jobs
 5. **Runs a security vulnerability assessment** checking for common misconfigurations
-6. **Generates per-server HTML reports** with an interactive summary index
+6. **Evaluates kill chain attack paths** to determine real-world exploitability
+7. **Generates per-server HTML reports** with an interactive summary index
 
 All from a single `.ps1` file. No modules to install. No agents to deploy.
 
@@ -57,6 +58,33 @@ Checks for 15+ common SQL Server security issues across 10 categories:
 | Public Role Permissions | Warning | Extra server-level permissions granted to public |
 | Orphaned Users | Warning | Database users with no matching server login |
 | Password Policy Gaps | Warning | SQL logins without password policy enforcement |
+
+### Kill Chain / Exploitability Assessment
+Goes beyond individual findings to evaluate whether they **combine into exploitable attack paths**. Evaluates 16 real-world SQL Server attack paths across 5 kill chain phases:
+
+| Phase | Attack Path | What It Evaluates |
+|-------|------------|-------------------|
+| Execution | xp_cmdshell RCE | xp_cmdshell enabled + sysadmin access or EXECUTE grant |
+| Execution | OLE Automation RCE | OLE Automation enabled + sysadmin access |
+| Execution | CLR Assembly Execution | CLR enabled + TRUSTWORTHY database + db_owner |
+| Execution | Agent Job Command Execution | CmdExec/PowerShell job steps with sysadmin owner |
+| Privilege Escalation | TRUSTWORTHY db_owner to sysadmin | TRUSTWORTHY database + non-sysadmin db_owner |
+| Privilege Escalation | Login Impersonation | IMPERSONATE permission on sysadmin login |
+| Privilege Escalation | Service Account Exploitation | High-privilege service account + code execution path |
+| Privilege Escalation | Ownership Chaining | Cross-DB chaining + EXECUTE AS OWNER procedures |
+| Lateral Movement | Linked Server Pivot | Linked servers with RPC-out + saved credentials |
+| Lateral Movement | Ad Hoc Distributed Queries | Ad Hoc Queries enabled + sysadmin access |
+| Lateral Movement | Database Mail Exfiltration | Database Mail enabled + user access |
+| Persistence | Startup Procedure | Startup proc scan enabled + startup procs exist |
+| Persistence | SQL Agent Job | Agent running + sysadmin access |
+| Persistence | Trigger-based | Enabled server-level DDL triggers |
+| Credential Access | SA Brute Force | sa enabled + mixed auth + no password policy |
+| Credential Access | Credential Harvesting | Saved linked server creds, cleartext job step creds, DB-scoped credentials |
+
+Each path is classified as:
+- **Exploitable** - All prerequisites met, immediately actionable
+- **Partially Exploitable** - Some prerequisites met, needs one more step
+- **Mitigated** - Key prerequisite blocked
 
 ### HTML Reports
 - **Per-server reports** with collapsible sections, color-coded status indicators, and security severity badges
@@ -168,6 +196,11 @@ DBExplorer_Reports/
               +--------------+---------------+
                              |
                     +--------v---------+
+                    | Kill Chain       |  16 attack paths
+                    | Assessment       |  5 kill chain phases
+                    +--------+---------+
+                             |
+                    +--------v---------+
                     | HTML Report      |  Per-server + Summary
                     | Generation       |  Self-contained HTML
                     +------------------+
@@ -218,16 +251,17 @@ See `DBExplorer_SafetyAssessment.html` for the full safety audit report.
 Each server report includes these collapsible sections:
 
 1. **Security Vulnerability Assessment** - Color-coded findings with severity, detail, and remediation guidance (auto-expands if critical issues found)
-2. **Server Configuration** - SQL version, edition, memory, collation, service accounts
-3. **Databases** - All databases with size, status, recovery model
-4. **Backup Status** - Last backup timestamps per database
-5. **Server Security** - All logins and their server role memberships
-6. **Database Security** - Per-database user/role details
-7. **SQL Agent Jobs** - Job status, last run outcome, schedules
+2. **Kill Chain Assessment** - 16 attack paths across 5 kill chain phases with exploitability classification, phase summary, and detailed prerequisites/impact/remediation (auto-expands if exploitable paths found)
+3. **Server Configuration** - SQL version, edition, memory, collation, service accounts
+4. **Databases** - All databases with size, status, recovery model
+5. **Backup Status** - Last backup timestamps per database
+6. **Server Security** - All logins and their server role memberships
+7. **Database Security** - Per-database user/role details
+8. **SQL Agent Jobs** - Job status, last run outcome, schedules
 
 ### Summary Report
-- Dashboard metric cards (servers scanned, instances found, databases, critical findings)
-- Server overview table with quick-glance security status
+- Dashboard metric cards (servers scanned, instances found, databases, critical findings, exploitable kill chains)
+- Server overview table with quick-glance security status and kill chain exploitability count
 - Failed servers section (WinRM failures, access denied, etc.)
 
 ---
@@ -236,9 +270,11 @@ Each server report includes these collapsible sections:
 
 | File | Description |
 |------|-------------|
-| `DBExplorer.ps1` | The complete tool (single file, ~2,200 lines) |
+| `DBExplorer.ps1` | The complete tool (single file, ~3,100 lines) |
 | `DBExplorer_Documentation.html` | Technical documentation with architecture details, function reference, and SQL query catalog |
 | `DBExplorer_SafetyAssessment.html` | Full safety audit report covering 16 risk categories |
+| `DBExplorer_DevelopmentProcess.html` | Complete development process history |
+| `README.md` | This file |
 
 ---
 

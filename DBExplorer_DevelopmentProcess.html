@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DBExplorer - Development Process</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #f0f2f5;
+        color: #333;
+        line-height: 1.6;
+    }
+    .page-header {
+        background: linear-gradient(135deg, #4a148c 0%, #6a1b9a 50%, #1a237e 100%);
+        color: white;
+        padding: 50px 40px 40px;
+        text-align: center;
+    }
+    .page-header h1 { font-size: 36px; font-weight: 300; margin-bottom: 8px; }
+    .page-header .version { font-size: 14px; opacity: 0.7; letter-spacing: 2px; text-transform: uppercase; }
+    .page-header .tagline { font-size: 16px; opacity: 0.85; margin-top: 12px; max-width: 750px; margin-left: auto; margin-right: auto; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px 60px; }
+
+    /* Stats Banner */
+    .stats-banner {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        padding: 30px 40px;
+        margin: -30px auto 30px;
+        position: relative;
+        max-width: 1200px;
+    }
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 15px;
+        text-align: center;
+    }
+    .stat-card {
+        padding: 10px;
+    }
+    .stat-value {
+        font-size: 32px;
+        font-weight: 700;
+        color: #4a148c;
+    }
+    .stat-label {
+        font-size: 12px;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-top: 2px;
+    }
+
+    /* Table of Contents */
+    .toc {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        padding: 25px 30px;
+        margin-bottom: 25px;
+    }
+    .toc h2 { font-size: 18px; color: #4a148c; margin-bottom: 12px; }
+    .toc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 6px; }
+    .toc a {
+        color: #4a148c;
+        text-decoration: none;
+        font-size: 14px;
+        padding: 5px 10px;
+        border-radius: 4px;
+        display: block;
+        transition: background 0.15s;
+    }
+    .toc a:hover { background: #f3e5f5; }
+    .toc a .toc-num { color: #9e9e9e; margin-right: 6px; font-size: 12px; }
+
+    /* Session dividers */
+    .session-divider {
+        background: linear-gradient(135deg, #4a148c, #6a1b9a);
+        color: white;
+        padding: 20px 30px;
+        border-radius: 8px;
+        margin: 35px 0 25px;
+        font-size: 20px;
+        font-weight: 600;
+    }
+    .session-divider .session-sub {
+        font-size: 13px;
+        opacity: 0.8;
+        font-weight: 400;
+        margin-top: 4px;
+    }
+
+    /* Cards */
+    .card {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        margin-bottom: 20px;
+        overflow: hidden;
+    }
+    .card-header {
+        padding: 16px 25px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        user-select: none;
+        border-bottom: 1px solid #eee;
+        transition: background 0.15s;
+    }
+    .card-header:hover { background: #f8f9fa; }
+    .card-header .toggle { font-size: 14px; color: #999; transition: transform 0.2s; }
+    .card-header .toggle.open { transform: rotate(90deg); }
+    .card-body { padding: 20px 25px; display: none; }
+    .card-body.active { display: block; }
+
+    /* Phase type badges */
+    .badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-left: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+    .badge-request { background: #e8eaf6; color: #1a237e; }
+    .badge-build { background: #e8f5e9; color: #2e7d32; }
+    .badge-bug { background: #ffebee; color: #c62828; }
+    .badge-feature { background: #fff3e0; color: #e65100; }
+    .badge-refactor { background: #e3f2fd; color: #0d47a1; }
+    .badge-docs { background: #f3e5f5; color: #6a1b9a; }
+    .badge-audit { background: #e0f2f1; color: #00695c; }
+
+    /* Category colors for left borders */
+    .card-header.cat-request { border-left: 4px solid #1a237e; }
+    .card-header.cat-build { border-left: 4px solid #2e7d32; }
+    .card-header.cat-bug { border-left: 4px solid #c62828; }
+    .card-header.cat-feature { border-left: 4px solid #e65100; }
+    .card-header.cat-refactor { border-left: 4px solid #0d47a1; }
+    .card-header.cat-docs { border-left: 4px solid #6a1b9a; }
+    .card-header.cat-audit { border-left: 4px solid #00695c; }
+
+    /* User message callout */
+    .user-msg {
+        background: #f3e5f5;
+        border-left: 4px solid #6a1b9a;
+        border-radius: 0 6px 6px 0;
+        padding: 12px 18px;
+        margin: 12px 0;
+        font-size: 14px;
+    }
+    .user-msg .label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #6a1b9a;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    .user-msg .text {
+        font-style: italic;
+        color: #4a148c;
+    }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 14px; }
+    th {
+        background: #f5f5f5;
+        padding: 10px 14px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #555;
+        border-bottom: 2px solid #ddd;
+    }
+    td { padding: 10px 14px; border-bottom: 1px solid #eee; vertical-align: top; }
+    tr:hover td { background: #f8f9fa; }
+
+    /* Code blocks */
+    pre {
+        background: #263238;
+        color: #eeffff;
+        padding: 15px 20px;
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 13px;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        margin: 10px 0;
+        line-height: 1.5;
+    }
+    code {
+        background: #e8eaf6;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-size: 13px;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+    }
+    pre code {
+        background: none;
+        padding: 0;
+        color: inherit;
+    }
+    .cm { color: #546e7a; }
+    .kw { color: #c792ea; }
+    .st { color: #c3e88d; }
+    .fn { color: #82aaff; }
+    .num { color: #f78c6c; }
+    .del { color: #ff5370; text-decoration: line-through; }
+    .add { color: #c3e88d; }
+
+    /* Detail boxes */
+    .detail-box {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 15px 20px;
+        margin: 12px 0;
+        font-size: 14px;
+    }
+    .detail-box h4 { font-size: 13px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .detail-box ul { padding-left: 20px; }
+    .detail-box li { margin-bottom: 4px; }
+
+    /* Callouts */
+    .callout {
+        border-radius: 6px;
+        padding: 15px 20px;
+        margin: 15px 0;
+        font-size: 14px;
+    }
+    .callout-decision { background: #e8eaf6; border-left: 4px solid #1a237e; }
+    .callout-lesson { background: #fff3e0; border-left: 4px solid #ff9800; }
+    .callout-fix { background: #e8f5e9; border-left: 4px solid #43a047; }
+    .callout-error { background: #ffebee; border-left: 4px solid #e53935; }
+    .callout strong { display: block; margin-bottom: 4px; }
+
+    /* Timeline connector */
+    .timeline-arrow {
+        text-align: center;
+        color: #bbb;
+        font-size: 24px;
+        margin: -5px 0;
+        line-height: 1;
+    }
+
+    /* Evolution chart */
+    .evolution-bar {
+        display: flex;
+        align-items: center;
+        margin: 6px 0;
+    }
+    .evolution-label {
+        width: 200px;
+        font-size: 12px;
+        color: #666;
+        text-align: right;
+        padding-right: 12px;
+        flex-shrink: 0;
+    }
+    .evolution-track {
+        flex: 1;
+        background: #f0f0f0;
+        border-radius: 4px;
+        height: 24px;
+        position: relative;
+        overflow: hidden;
+    }
+    .evolution-fill {
+        height: 100%;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #7b1fa2, #4a148c);
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding-right: 8px;
+        font-size: 11px;
+        color: white;
+        font-weight: 600;
+        min-width: 50px;
+        transition: width 0.5s;
+    }
+
+    /* Footer */
+    .footer {
+        text-align: center;
+        padding: 30px;
+        color: #999;
+        font-size: 12px;
+    }
+
+    /* Print */
+    @media print {
+        .page-header { padding: 20px; }
+        .card-body { display: block !important; }
+        .toggle { display: none; }
+        body { background: white; }
+        .card { box-shadow: none; border: 1px solid #ddd; }
+    }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+    <div class="version">Development Process</div>
+    <h1>Building SQLExplorer</h1>
+    <div class="tagline">The complete story of how a 3,112-line PowerShell MSSQL discovery tool was designed, built, tested, and refined across 4 collaborative sessions</div>
+</div>
+
+<div class="container">
+
+<!-- ============================================================ -->
+<!-- STATS BANNER -->
+<!-- ============================================================ -->
+<div class="stats-banner">
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">4</div>
+            <div class="stat-label">Sessions</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">17</div>
+            <div class="stat-label">User Requests</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">21</div>
+            <div class="stat-label">Phases</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">15</div>
+            <div class="stat-label">Bugs Fixed</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">3,112</div>
+            <div class="stat-label">Final Lines</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">20</div>
+            <div class="stat-label">Functions</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">6</div>
+            <div class="stat-label">Files Created</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">19</div>
+            <div class="stat-label">Design Decisions</div>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- TABLE OF CONTENTS -->
+<!-- ============================================================ -->
+<div class="toc">
+    <h2>Contents</h2>
+    <div class="toc-grid">
+        <a href="#phase1"><span class="toc-num">1.</span> Initial Requirements</a>
+        <a href="#phase2"><span class="toc-num">2.</span> Design Decisions</a>
+        <a href="#phase3"><span class="toc-num">3.</span> Implementation Plan</a>
+        <a href="#phase4"><span class="toc-num">4.</span> Script Creation (1,889 lines)</a>
+        <a href="#phase5"><span class="toc-num">5.</span> Self-Review &amp; First Fixes</a>
+        <a href="#phase6"><span class="toc-num">6.</span> Documentation Created</a>
+        <a href="#phase7"><span class="toc-num">7.</span> Bug: EndInvoke PSDataCollection</a>
+        <a href="#phase8"><span class="toc-num">8.</span> PS5 &amp; UTF-8 Compatibility</a>
+        <a href="#phase9"><span class="toc-num">9.</span> Bug: Path Resolution &amp; AD Filter</a>
+        <a href="#phase10"><span class="toc-num">10.</span> Comprehensive PS5 Audit</a>
+        <a href="#phase11"><span class="toc-num">11.</span> Bug: Empty String Mandatory Param</a>
+        <a href="#phase12"><span class="toc-num">12.</span> SQL Auth Removal</a>
+        <a href="#phase13"><span class="toc-num">13.</span> Security Vulnerability Assessment</a>
+        <a href="#phase14"><span class="toc-num">14.</span> Documentation Update</a>
+        <a href="#phase15"><span class="toc-num">15.</span> Safety Assessment Report</a>
+        <a href="#phase16"><span class="toc-num">16.</span> README Creation</a>
+        <a href="#phase17"><span class="toc-num">17.</span> Kill Chain / Exploitability Assessment</a>
+        <a href="#phase18"><span class="toc-num">18.</span> Documentation Updates for Kill Chain</a>
+        <a href="#bugs"><span class="toc-num">A.</span> Complete Bug Registry</a>
+        <a href="#decisions"><span class="toc-num">B.</span> Design Decision Registry</a>
+        <a href="#evolution"><span class="toc-num">C.</span> Script Evolution Chart</a>
+        <a href="#files"><span class="toc-num">D.</span> Files Created</a>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SESSION 1 -->
+<!-- ============================================================ -->
+<div class="session-divider">
+    Session 1: Creation &amp; First Bug Fixes
+    <div class="session-sub">Script created from scratch, documentation generated, first runtime errors discovered and fixed</div>
+</div>
+
+<!-- Phase 1 -->
+<div class="card" id="phase1">
+    <div class="card-header cat-request" onclick="toggleSection('b1')">
+        <span>Phase 1: Initial Requirements <span class="badge badge-request">User Request</span></span>
+        <span class="toggle open" id="toggle-b1">&#9654;</span>
+    </div>
+    <div class="card-body active" id="b1">
+        <div class="user-msg">
+            <div class="label">User Message #1</div>
+            <div class="text">"I need a powershell script that is designed to run from a domain joined PC. It needs to search Active directory for computers, it needs to then port scan them for common MSSQL service ports, if it finds MSSQL it then needs to connect to the remote SQL server using WINRM and then inventory the MSSQL configuration, the databases and the security model. It should then create an HTML report with all the details (per server)"</div>
+        </div>
+        <p>The project directory was completely empty. This was a greenfield build from scratch.</p>
+        <div class="detail-box">
+            <h4>Requirements Extracted</h4>
+            <ul>
+                <li>Run from a domain-joined Windows PC</li>
+                <li>Search Active Directory for computers</li>
+                <li>Port scan discovered computers for MSSQL service ports</li>
+                <li>Connect to SQL Servers via WinRM (not direct SQL connections)</li>
+                <li>Inventory: SQL configuration, databases, and security model</li>
+                <li>Generate per-server HTML reports</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Phase 2 -->
+<div class="card" id="phase2">
+    <div class="card-header cat-build" onclick="toggleSection('b2')">
+        <span>Phase 2: Design Decisions <span class="badge badge-build">Architecture</span></span>
+        <span class="toggle" id="toggle-b2">&#9654;</span>
+    </div>
+    <div class="card-body" id="b2">
+        <p>Three key design questions were presented to the user before any code was written:</p>
+
+        <div class="callout callout-decision">
+            <strong>Decision 1: Script Style</strong>
+            <em>Q: "Would you prefer a single self-contained .ps1 script, or a modular approach with 5+ separate .psm1 module files?"</em><br>
+            <strong>Answer: Single .ps1 file</strong> - Everything in one portable script for easy distribution.
+        </div>
+
+        <div class="callout callout-decision">
+            <strong>Decision 2: Authentication Model</strong>
+            <em>Q: "Should the script support an optional -Credential parameter, or always use the current user's Windows auth?"</em><br>
+            <strong>Answer (custom):</strong> "Use the current creds, if that fails prompt the user for other windows creds or SQL auth creds" - Graceful fallback with interactive prompt.
+        </div>
+
+        <div class="callout callout-decision">
+            <strong>Decision 3: Security Depth</strong>
+            <em>Q: "How should per-database security detail work? Full detail or summary?"</em><br>
+            <strong>Answer: Full detail</strong> - Enumerate logins, database users, role memberships, and explicit permissions for every database.
+        </div>
+
+        <div class="detail-box">
+            <h4>Architecture Decisions Made</h4>
+            <ul>
+                <li><strong>Single .ps1 file</strong> - No modules, no config files. Copy to a domain PC and run it.</li>
+                <li><strong>WinRM for everything</strong> - All SQL queries run remotely via <code>Invoke-Command</code>. No SQL client drivers needed on the scanning machine.</li>
+                <li><strong>Runspace pools</strong> - Parallel async TCP port scanning for performance.</li>
+                <li><strong>Self-contained HTML</strong> - Embedded CSS/JS, works offline, no CDN dependencies.</li>
+                <li><strong>SQL fallback chain</strong> - Try <code>Invoke-Sqlcmd</code> (SqlServer module), then SQLPS module, then .NET <code>SqlClient</code>.</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Phase 3 -->
+<div class="card" id="phase3">
+    <div class="card-header cat-build" onclick="toggleSection('b3')">
+        <span>Phase 3: Implementation Plan <span class="badge badge-build">Planning</span></span>
+        <span class="toggle" id="toggle-b3">&#9654;</span>
+    </div>
+    <div class="card-body" id="b3">
+        <p>A formal implementation plan was written before coding began. Key aspects:</p>
+
+        <div class="detail-box">
+            <h4>Planned Parameters</h4>
+            <pre><code>[CmdletBinding()]
+param(
+    [string]$SearchBase,             <span class="cm"># AD OU scope (default: entire domain)</span>
+    [string]$ComputerName,           <span class="cm"># Manual server list (skip AD)</span>
+    [int[]]$Ports = @(1433,1434,2383,4022),
+    [int]$PortTimeout = 1000,        <span class="cm"># Milliseconds</span>
+    [int]$MaxThreads = 20,
+    [string]$OutputPath = ".\DBExplorer_Reports",
+    [switch]$IncludeSystemDatabases
+)</code></pre>
+        </div>
+
+        <div class="detail-box">
+            <h4>Planned Functions (10 in plan, grew to 19 in final)</h4>
+            <ul>
+                <li><code>Write-Log</code> - Dual-output logging</li>
+                <li><code>Test-Port</code> / <code>Invoke-ParallelPortScan</code> - Async port scanning</li>
+                <li><code>Test-WinRMAccess</code> - WinRM connectivity test</li>
+                <li><code>Invoke-SQLQuery</code> - Core query engine</li>
+                <li><code>Get-SQLInstances</code> - Instance detection</li>
+                <li><code>Get-CredentialFallback</code> - Interactive credential prompt</li>
+                <li><code>ConvertTo-HtmlTable</code> - HTML table generation</li>
+                <li><code>New-ServerReport</code> / <code>New-SummaryReport</code> - Report generation</li>
+            </ul>
+        </div>
+
+        <p>Estimated size: 800-1,000 lines. Actual first version: <strong>1,889 lines</strong>.</p>
+    </div>
+</div>
+
+<!-- Phase 4 -->
+<div class="card" id="phase4">
+    <div class="card-header cat-build" onclick="toggleSection('b4')">
+        <span>Phase 4: Script Creation - 1,889 Lines <span class="badge badge-build">Implementation</span></span>
+        <span class="toggle" id="toggle-b4">&#9654;</span>
+    </div>
+    <div class="card-body" id="b4">
+        <p>The entire script was written in a single pass to <code>DBExplorer.ps1</code> (66,721 characters). This included:</p>
+
+        <div class="detail-box">
+            <h4>Capabilities Delivered in V1</h4>
+            <ul>
+                <li><strong>AD Discovery</strong> - <code>Get-ADComputer</code> to find enabled Windows machines</li>
+                <li><strong>Parallel Port Scan</strong> - Runspace pool with async TCP sockets on 4 ports</li>
+                <li><strong>WinRM + Credential Fallback</strong> - Current creds first, prompt for Windows or SQL auth on failure</li>
+                <li><strong>SQL Instance Detection</strong> - Registry + service enumeration for default and named instances</li>
+                <li><strong>Full Inventory</strong> - Server config, databases, backup status, logins + roles, per-database users + permissions, SQL Agent jobs</li>
+                <li><strong>HTML Reports</strong> - Per-server reports with collapsible sections + summary index page</li>
+            </ul>
+        </div>
+
+        <div class="detail-box">
+            <h4>Code Organization (8 Regions)</h4>
+            <table>
+                <thead><tr><th>Region</th><th>Functions</th></tr></thead>
+                <tbody>
+                    <tr><td>LOGGING</td><td><code>Write-Log</code></td></tr>
+                    <tr><td>AD DISCOVERY</td><td><code>Get-ADComputerTargets</code></td></tr>
+                    <tr><td>PORT SCANNER</td><td><code>Invoke-ParallelPortScan</code></td></tr>
+                    <tr><td>WINRM &amp; CREDENTIALS</td><td><code>Test-WinRMAccess</code>, <code>Get-CredentialFallback</code></td></tr>
+                    <tr><td>SQL INSTANCE DETECTION</td><td><code>Get-SQLInstances</code></td></tr>
+                    <tr><td>SQL INVENTORY</td><td><code>Invoke-RemoteSQLQuery</code>, <code>Get-SQLServerConfig</code>, <code>Get-SQLDatabases</code>, <code>Get-SQLBackupStatus</code>, <code>Get-SQLServerSecurity</code>, <code>Get-SQLDatabaseSecurity</code>, <code>Get-SQLAgentJobs</code></td></tr>
+                    <tr><td>HTML REPORT GENERATION</td><td><code>ConvertTo-HtmlTable</code>, <code>Get-HtmlHeader</code>, <code>New-ServerReport</code>, <code>New-SummaryReport</code></td></tr>
+                    <tr><td>MAIN ORCHESTRATION</td><td><code>Invoke-DBExplorer</code></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Phase 5 -->
+<div class="card" id="phase5">
+    <div class="card-header cat-audit" onclick="toggleSection('b5')">
+        <span>Phase 5: Self-Review &amp; First Fixes <span class="badge badge-audit">Code Review</span></span>
+        <span class="toggle" id="toggle-b5">&#9654;</span>
+    </div>
+    <div class="card-body" id="b5">
+        <p>Before delivering, an immediate self-review caught two issues:</p>
+
+        <div class="callout callout-fix">
+            <strong>Fix: Dead Code Removed</strong>
+            Removed unused variable <code>$safeDbName = $dbName -replace '[^a-zA-Z0-9]', '_'</code> from database security HTML generation (line 1365). Leftover from development that was never used.
+        </div>
+
+        <div class="callout callout-fix">
+            <strong>Fix: HTML Title Tag Placement</strong>
+            <code>Get-HtmlHeader</code> was closing <code>&lt;/head&gt;</code> before callers added their <code>&lt;title&gt;</code> tag, resulting in invalid HTML where <code>&lt;title&gt;</code> appeared outside <code>&lt;head&gt;</code>.
+            <br><br>Fix: Removed <code>&lt;/head&gt;</code> from <code>Get-HtmlHeader</code>, let each caller add <code>&lt;title&gt;</code> then close <code>&lt;/head&gt;</code> themselves.
+        </div>
+
+        <div class="callout callout-lesson">
+            <strong>Lesson Learned</strong>
+            Attempted to run PowerShell syntax validation on macOS - no PowerShell available. All syntax validation must happen on the Windows machine where the script runs.
+        </div>
+    </div>
+</div>
+
+<!-- Phase 6 -->
+<div class="card" id="phase6">
+    <div class="card-header cat-docs" onclick="toggleSection('b6')">
+        <span>Phase 6: Documentation Created <span class="badge badge-docs">Documentation</span></span>
+        <span class="toggle" id="toggle-b6">&#9654;</span>
+    </div>
+    <div class="card-body" id="b6">
+        <div class="user-msg">
+            <div class="label">User Message #2</div>
+            <div class="text">"review the script, create an html report of how the script works and its key flow and functions"</div>
+        </div>
+
+        <p>Created <code>DBExplorer_Documentation.html</code> (49,443 characters) with comprehensive technical documentation:</p>
+
+        <div class="detail-box">
+            <h4>Documentation Contents</h4>
+            <ul>
+                <li>Architecture overview with layered function diagram</li>
+                <li>All 7 script parameters with types, defaults, descriptions</li>
+                <li>Visual 5-phase execution flow diagram</li>
+                <li>Deep dives into each phase: AD discovery, parallel port scanning (runspace pool mechanics), WinRM credential fallback flow, instance detection, SQL inventory</li>
+                <li>SQL queries reference - every system view/DMV used</li>
+                <li>HTML report generation details with section mockups</li>
+                <li>Error handling matrix for every failure scenario</li>
+                <li>Complete function reference table with line numbers</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Phase 7 -->
+<div class="card" id="phase7">
+    <div class="card-header cat-bug" onclick="toggleSection('b7')">
+        <span>Phase 7: Bug - EndInvoke PSDataCollection Wrapping <span class="badge badge-bug">Bug Fix</span></span>
+        <span class="toggle" id="toggle-b7">&#9654;</span>
+    </div>
+    <div class="card-body" id="b7">
+        <div class="user-msg">
+            <div class="label">User Message #3</div>
+            <div class="text">"line 253 select-object : Property 'Computer' cannot be found"</div>
+        </div>
+
+        <div class="callout callout-error">
+            <strong>Root Cause</strong>
+            <code>EndInvoke()</code> returns a <code>PSDataCollection&lt;PSObject&gt;</code> (a collection wrapper), not a single object. When added directly to the <code>$results</code> ArrayList, the pipeline received collection objects that didn't have the expected <code>IsOpen</code> or <code>Computer</code> properties.
+        </div>
+
+        <div class="detail-box">
+            <h4>Before (Broken)</h4>
+            <pre><code><span class="kw">$output</span> = $job.Pipe.EndInvoke($job.Result)
+<span class="kw">if</span> ($output) {
+    [void]$results.Add(<span class="del">$output</span>)  <span class="cm"># Adds the COLLECTION, not the object inside</span>
+}</code></pre>
+        </div>
+
+        <div class="detail-box">
+            <h4>After (Fixed)</h4>
+            <pre><code><span class="kw">$output</span> = $job.Pipe.EndInvoke($job.Result)
+<span class="cm"># EndInvoke returns PSDataCollection - iterate to extract actual objects</span>
+<span class="kw">foreach</span> (<span class="add">$item</span> <span class="kw">in</span> $output) {
+    <span class="kw">if</span> ($item) {
+        [void]$results.Add(<span class="add">$item</span>)  <span class="cm"># Adds the unwrapped PSCustomObject</span>
+    }
+}</code></pre>
+        </div>
+
+        <div class="callout callout-lesson">
+            <strong>Lesson Learned</strong>
+            PowerShell's <code>EndInvoke()</code> always returns a collection type, even for single results. Always iterate the output to unwrap the underlying objects before adding them to another collection.
+        </div>
+    </div>
+</div>
+
+<!-- Phase 8 -->
+<div class="card" id="phase8">
+    <div class="card-header cat-refactor" onclick="toggleSection('b8')">
+        <span>Phase 8: PowerShell 5 &amp; UTF-8 Compatibility <span class="badge badge-refactor">Compatibility</span></span>
+        <span class="toggle" id="toggle-b8">&#9654;</span>
+    </div>
+    <div class="card-body" id="b8">
+        <div class="user-msg">
+            <div class="label">User Message #4</div>
+            <div class="text">"make sure this script works with powershell5 ASCII UTF8"</div>
+        </div>
+
+        <p>A comprehensive compatibility audit discovered two categories of issues:</p>
+
+        <div class="callout callout-error">
+            <strong>Issue 1: Non-ASCII Character (em dash U+2014)</strong>
+            Found a Unicode em dash character on line 232 in a comment. Bytes: <code>E2 80 94</code>.
+            This would cause issues with strict ASCII/UTF-8 no-BOM requirements.
+            <br><br>Fix: Replaced with plain ASCII hyphen <code>-</code>.
+        </div>
+
+        <div class="callout callout-error">
+            <strong>Issue 2: Out-File UTF-8 BOM in PowerShell 5</strong>
+            PowerShell 5's <code>Out-File -Encoding UTF8</code> writes a Byte Order Mark (BOM) - three invisible bytes (<code>EF BB BF</code>) at the start of the file. PS7 does not. Found at 3 locations.
+        </div>
+
+        <div class="detail-box">
+            <h4>BOM Fix Applied to All 3 File Writers</h4>
+            <pre><code><span class="cm"># Before (writes BOM in PS5)</span>
+$html.ToString() | <span class="del">Out-File -FilePath $filePath -Encoding UTF8</span>
+
+<span class="cm"># After (BOM-free in PS5 and PS7)</span>
+<span class="kw">$utf8NoBom</span> = <span class="fn">New-Object</span> System.Text.UTF8Encoding(<span class="add">$false</span>)
+[System.IO.File]::<span class="fn">WriteAllText</span>($filePath, $html.ToString(), <span class="kw">$utf8NoBom</span>)</code></pre>
+        </div>
+
+        <p>Verification: Byte-level scan confirmed zero non-ASCII bytes remaining and no BOM in file headers.</p>
+    </div>
+</div>
+
+<!-- Phase 9 -->
+<div class="card" id="phase9">
+    <div class="card-header cat-bug" onclick="toggleSection('b9')">
+        <span>Phase 9: Bug - Path Resolution &amp; AD Filter <span class="badge badge-bug">Bug Fix</span></span>
+        <span class="toggle" id="toggle-b9">&#9654;</span>
+    </div>
+    <div class="card-body" id="b9">
+        <div class="user-msg">
+            <div class="label">User Message #5</div>
+            <div class="text">"Error line 111 Exception calling appendalltext with 3 arguments"</div>
+            <div class="text">"AD query failed"</div>
+        </div>
+
+        <p>Two bugs reported simultaneously. Both were PS5-specific behavioral differences.</p>
+
+        <div class="callout callout-error">
+            <strong>Bug 1: .NET Path Resolution</strong>
+            <code>$OutputPath</code> defaulted to <code>".\DBExplorer_Reports"</code> (relative). PowerShell resolves <code>.\</code> relative to <code>$PWD</code>, but .NET static methods like <code>[System.IO.File]::AppendAllText()</code> resolve relative to the <strong>process working directory</strong> (which can differ from <code>$PWD</code>).
+        </div>
+
+        <div class="detail-box">
+            <h4>Path Fix</h4>
+            <pre><code><span class="cm"># Resolve to absolute path before any .NET calls</span>
+<span class="kw">if</span> (-not [System.IO.Path]::<span class="fn">IsPathRooted</span>($OutputPath)) {
+    $OutputPath = <span class="fn">Join-Path</span> $PWD $OutputPath
+}
+$reportDir = $OutputPath</code></pre>
+        </div>
+
+        <div class="callout callout-error">
+            <strong>Bug 2: AD Filter Syntax</strong>
+            The AD filter string <code>"Enabled -eq 'True'"</code> is unreliable in PS5. PS5's AD provider misinterprets the string <code>'True'</code> in certain contexts.
+        </div>
+
+        <div class="detail-box">
+            <h4>AD Filter Fix</h4>
+            <pre><code><span class="cm"># Before (unreliable in PS5)</span>
+Filter = <span class="del">"Enabled -eq 'True'"</span>
+
+<span class="cm"># After (canonical PS5-compatible form)</span>
+Filter = <span class="add">{Enabled -eq $true}</span>
+
+<span class="cm"># Also force array for single-result safety</span>
+$computers = <span class="add">@(</span>Get-ADComputer @adParams | ...<span class="add">)</span></code></pre>
+        </div>
+
+        <div class="callout callout-lesson">
+            <strong>Lessons Learned</strong>
+            1. .NET static methods and PowerShell use different working directory concepts. Always convert to absolute paths before calling .NET methods.<br>
+            2. AD module filter syntax behaves differently between PS5 and PS7. Use scriptblock filters with proper boolean <code>$true</code> instead of string <code>'True'</code>.
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SESSION 2 -->
+<!-- ============================================================ -->
+<div class="session-divider">
+    Session 2: Comprehensive Audit, SQL Auth Removal &amp; Security Assessment
+    <div class="session-sub">Deep PS5 audit, architectural refactoring, and major new feature addition</div>
+</div>
+
+<!-- Phase 10 -->
+<div class="card" id="phase10">
+    <div class="card-header cat-audit" onclick="toggleSection('b10')">
+        <span>Phase 10: Comprehensive PS5 Audit <span class="badge badge-audit">Full Audit</span></span>
+        <span class="toggle" id="toggle-b10">&#9654;</span>
+    </div>
+    <div class="card-body" id="b10">
+        <div class="user-msg">
+            <div class="label">User Message #6</div>
+            <div class="text">"check the script fix all errors"</div>
+        </div>
+
+        <p>The entire script was read in 4 chunks (500 lines each) and systematically audited for PS5 compatibility issues. The audit checked for:</p>
+
+        <table>
+            <thead><tr><th>Check</th><th>Result</th></tr></thead>
+            <tbody>
+                <tr><td>Null-coalescing <code>??</code> operators (PS7-only)</td><td>None found</td></tr>
+                <tr><td>Null-conditional <code>?.</code> operators (PS7-only)</td><td>None found</td></tr>
+                <tr><td>Ternary operators (PS7-only)</td><td>None found</td></tr>
+                <tr><td><code>ForEach-Object -Parallel</code> (PS7-only)</td><td>None found</td></tr>
+                <tr><td>Non-ASCII characters</td><td>Zero bytes</td></tr>
+                <tr><td><code>::new()</code> syntax</td><td>Valid PS5+ (introduced in PS5.0)</td></tr>
+                <tr><td><code>.Count</code> on nulls</td><td>All guarded</td></tr>
+                <tr><td><code>System.Web</code> assembly load order</td><td>Loaded before <code>HtmlEncode</code> calls</td></tr>
+                <tr><td>HTML <code>&lt;/head&gt;</code> structure</td><td>Correct - callers close it</td></tr>
+                <tr><td><strong>Inline <code>if</code> in hashtable literals</strong></td><td><strong>3 BUGS FOUND</strong></td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-error">
+            <strong>Critical Finding: Inline <code>if</code> in Hashtable Literals</strong>
+            In PowerShell 5, <code>if</code> is a <em>statement</em>, not an expression. Writing <code>Key = if (...) {...} else {...}</code> inside a <code>@{}</code> hashtable literal causes a parse error. PS7 treats <code>if</code> as an expression and allows it. Found at 3 locations:
+            <ul style="margin-top: 8px; padding-left: 20px;">
+                <li><strong>Line 329:</strong> <code>AuthType = if ($choice -eq "S") { "SQL" } else { "Windows" }</code></li>
+                <li><strong>Line 1522:</strong> <code>Version = if ($props) { $props.ProductVersion } else { "N/A" }</code></li>
+                <li><strong>Line 1523:</strong> <code>Edition = if ($props) { $props.Edition } else { "N/A" }</code></li>
+            </ul>
+        </div>
+
+        <div class="detail-box">
+            <h4>Fix Pattern: Extract to Variable</h4>
+            <pre><code><span class="cm"># Before (PS5 parse error)</span>
+$credInfo = @{
+    Credential = $cred
+    AuthType   = <span class="del">if ($choice -eq "S") { "SQL" } else { "Windows" }</span>
+}
+
+<span class="cm"># After (works in PS5 and PS7)</span>
+<span class="add">$authType = if ($choice -eq "S") { "SQL" } else { "Windows" }</span>
+$credInfo = @{
+    Credential = $cred
+    AuthType   = <span class="add">$authType</span>
+}</code></pre>
+        </div>
+
+        <p>Script grew from 1,904 to <strong>1,907 lines</strong> (+3 extracted variable lines).</p>
+    </div>
+</div>
+
+<!-- Phase 11 -->
+<div class="card" id="phase11">
+    <div class="card-header cat-bug" onclick="toggleSection('b11')">
+        <span>Phase 11: Bug - Empty String Mandatory Parameter <span class="badge badge-bug">Bug Fix</span></span>
+        <span class="toggle" id="toggle-b11">&#9654;</span>
+    </div>
+    <div class="card-body" id="b11">
+        <div class="user-msg">
+            <div class="label">User Message #7</div>
+            <div class="text">"line 1691 error. message is an empty string."</div>
+        </div>
+
+        <div class="callout callout-error">
+            <strong>Root Cause: PS5 Mandatory String Behavior</strong>
+            <code>Write-Log ""</code> was called on lines 1691, 1867, and 1880 to create visual spacing in the log. In PS7, empty strings are accepted for <code>[Parameter(Mandatory)]</code> string parameters. In PS5, an empty string is treated as "missing" and PowerShell <strong>prompts interactively</strong> for input, hanging the script.
+        </div>
+
+        <div class="detail-box">
+            <h4>Fix: AllowEmptyString Attribute</h4>
+            <pre><code><span class="cm"># Before (hangs in PS5 when called with "")</span>
+param(
+    [Parameter(Mandatory)]
+    [string]$Message,
+    ...
+)
+
+<span class="cm"># After (accepts empty strings in PS5)</span>
+param(
+    [Parameter(Mandatory)]
+    <span class="add">[AllowEmptyString()]</span>
+    [string]$Message,
+    ...
+)</code></pre>
+        </div>
+
+        <div class="callout callout-lesson">
+            <strong>Lesson Learned</strong>
+            PowerShell 5 and 7 handle mandatory empty strings differently. Always add <code>[AllowEmptyString()]</code> when a mandatory string parameter might legitimately be empty.
+        </div>
+    </div>
+</div>
+
+<!-- Phase 12 -->
+<div class="card" id="phase12">
+    <div class="card-header cat-refactor" onclick="toggleSection('b12')">
+        <span>Phase 12: SQL Auth Removal - Architectural Refactor <span class="badge badge-refactor">Refactor</span></span>
+        <span class="toggle" id="toggle-b12">&#9654;</span>
+    </div>
+    <div class="card-body" id="b12">
+        <div class="user-msg">
+            <div class="label">User Message #8</div>
+            <div class="text">"it asks for SQL auth but it then says it needs WINRM so remove the SQL Auth part"</div>
+        </div>
+
+        <div class="callout callout-decision">
+            <strong>Design Insight</strong>
+            The user discovered a UX contradiction: the script offered SQL Authentication as a credential option, but since WinRM is always required to reach the remote machine, SQL Auth was misleading. The script would ask for SQL credentials and then fail because WinRM still needed Windows credentials.
+        </div>
+
+        <p>This required changes across <strong>8 functions</strong>:</p>
+
+        <table>
+            <thead><tr><th>Change</th><th>Details</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td><code>Get-CredentialFallback</code></td>
+                    <td>Simplified from [W]/[S]/[K] menu to [W]/[K]. Return type changed from hashtable <code>@{Credential; AuthType}</code> to plain <code>PSCredential</code></td>
+                </tr>
+                <tr>
+                    <td>Main inventory loop</td>
+                    <td>Removed <code>$sqlAuth</code> variable and <code>if/elseif</code> branching on <code>AuthType</code></td>
+                </tr>
+                <tr>
+                    <td><code>Invoke-RemoteSQLQuery</code></td>
+                    <td>Removed <code>[hashtable]$SQLAuth</code> parameter, SQL username/password arguments, and SQL Auth connection string. Now always uses <code>Integrated Security=SSPI</code></td>
+                </tr>
+                <tr>
+                    <td><code>Get-SQLServerConfig</code></td>
+                    <td>Removed <code>[hashtable]$SQLAuth</code> parameter</td>
+                </tr>
+                <tr>
+                    <td><code>Get-SQLDatabases</code></td>
+                    <td>Removed <code>[hashtable]$SQLAuth</code> parameter</td>
+                </tr>
+                <tr>
+                    <td><code>Get-SQLBackupStatus</code></td>
+                    <td>Removed <code>[hashtable]$SQLAuth</code> parameter</td>
+                </tr>
+                <tr>
+                    <td><code>Get-SQLServerSecurity</code></td>
+                    <td>Removed <code>[hashtable]$SQLAuth</code> parameter</td>
+                </tr>
+                <tr>
+                    <td><code>Get-SQLDatabaseSecurity</code></td>
+                    <td>Removed <code>[hashtable]$SQLAuth</code> parameter</td>
+                </tr>
+                <tr>
+                    <td><code>Get-SQLAgentJobs</code></td>
+                    <td>Removed <code>[hashtable]$SQLAuth</code> parameter</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>Script shrank from ~1,907 to ~<strong>1,852 lines</strong> after removing SQL Auth code. Grep confirmed zero remaining references to <code>SQLAuth</code> or <code>AuthType</code>.</p>
+    </div>
+</div>
+
+<!-- Phase 13 -->
+<div class="card" id="phase13">
+    <div class="card-header cat-feature" onclick="toggleSection('b13')">
+        <span>Phase 13: Security Vulnerability Assessment - Major Feature <span class="badge badge-feature">New Feature</span></span>
+        <span class="toggle" id="toggle-b13">&#9654;</span>
+    </div>
+    <div class="card-body" id="b13">
+        <div class="user-msg">
+            <div class="label">User Message #9</div>
+            <div class="text">"does this check for XPcmdshell and other typical vulnerabilities"</div>
+        </div>
+
+        <div class="callout callout-decision">
+            <strong>Assessment</strong>
+            The script was collecting <code>xp_cmdshell</code> and other config values but only reporting their raw values - it wasn't flagging them as vulnerabilities or checking for common SQL Server security issues.
+        </div>
+
+        <p>A new function <code>Get-SQLSecurityAssessment</code> was created (~285 lines) with <strong>10 check categories</strong> and <strong>15+ finding types</strong>:</p>
+
+        <table>
+            <thead><tr><th>#</th><th>Check</th><th>Severity</th><th>Detection</th></tr></thead>
+            <tbody>
+                <tr><td>1</td><td>xp_cmdshell enabled</td><td style="color:#c62828;font-weight:600;">Critical</td><td>OS command execution from T-SQL</td></tr>
+                <tr><td>2</td><td>CLR Integration</td><td style="color:#e65100;font-weight:600;">Warning</td><td>.NET assemblies running inside SQL</td></tr>
+                <tr><td>3</td><td>OLE Automation</td><td style="color:#e65100;font-weight:600;">Warning</td><td>COM object instantiation from T-SQL</td></tr>
+                <tr><td>4</td><td>Ad Hoc Distributed Queries</td><td style="color:#e65100;font-weight:600;">Warning</td><td>OPENROWSET/OPENDATASOURCE</td></tr>
+                <tr><td>5</td><td>Cross-DB Ownership Chaining</td><td style="color:#e65100;font-weight:600;">Warning</td><td>Bypasses database-level permissions</td></tr>
+                <tr><td>6</td><td>Remote Access / DAC / Startup Procs / DB Mail</td><td style="color:#0d47a1;">Info/Warning</td><td>Attack surface configuration flags</td></tr>
+                <tr><td>7</td><td>Mixed Authentication Mode</td><td style="color:#e65100;font-weight:600;">Warning</td><td>SQL+Windows vs Windows-only</td></tr>
+                <tr><td>8</td><td>SA Account</td><td style="color:#c62828;font-weight:600;">Critical</td><td>Enabled, missing password policy/expiration</td></tr>
+                <tr><td>9</td><td>Excessive Sysadmins (&gt;3)</td><td style="color:#e65100;font-weight:600;">Warning</td><td>Too many privileged accounts</td></tr>
+                <tr><td>10</td><td>TRUSTWORTHY Databases</td><td style="color:#c62828;font-weight:600;">Critical</td><td>Privilege escalation path (db_owner to sysadmin)</td></tr>
+                <tr><td>11</td><td>Guest Access</td><td style="color:#e65100;font-weight:600;">Warning</td><td>Guest CONNECT in user databases</td></tr>
+                <tr><td>12</td><td>BUILTIN\Administrators</td><td style="color:#c62828;font-weight:600;">Critical</td><td>All local admins get sysadmin</td></tr>
+                <tr><td>13</td><td>Public Role Permissions</td><td style="color:#e65100;font-weight:600;">Warning</td><td>Extra server-level permissions on public</td></tr>
+                <tr><td>14</td><td>Orphaned Users</td><td style="color:#e65100;font-weight:600;">Warning</td><td>Users with no matching server login</td></tr>
+                <tr><td>15</td><td>Password Policy Gaps</td><td style="color:#e65100;font-weight:600;">Warning</td><td>SQL logins without policy enforcement</td></tr>
+            </tbody>
+        </table>
+
+        <p>Each finding returns: <code>[PSCustomObject]@{Finding; Severity; CurrentValue; Detail; Remediation}</code></p>
+
+        <div class="detail-box">
+            <h4>Additional Changes Required</h4>
+            <ul>
+                <li>Added severity color coding (Critical=red, Warning=amber, Info=blue) to <code>ConvertTo-HtmlTable</code></li>
+                <li>Wired <code>SecurityAssessment</code> into the main inventory loop data collection</li>
+                <li>Added Security Assessment as <strong>first section</strong> in per-server reports (auto-expands if Critical findings)</li>
+                <li>Added security metric card to per-server dashboard</li>
+                <li>Added Security column and metric card to summary report</li>
+            </ul>
+        </div>
+
+        <div class="callout callout-error">
+            <strong>Bug Found During Implementation: Database-Scoped DMVs</strong>
+            The guest access and orphaned users queries originally ran against <code>sys.database_permissions</code> and <code>sys.database_principals</code> from master context. These views are <strong>database-scoped</strong> - they only return data for the current database, not all databases.
+            <br><br>
+            <strong>Fix:</strong> Replaced with dynamic SQL using <code>sp_executesql</code> that iterates all user databases with <code>QUOTENAME()</code> for safe identifier escaping:
+        </div>
+
+        <pre><code><span class="cm">-- Iterates all user databases safely</span>
+<span class="kw">DECLARE</span> @results <span class="kw">TABLE</span> (DatabaseName SYSNAME)
+<span class="kw">DECLARE</span> @sql NVARCHAR(MAX) = <span class="st">''</span>
+<span class="kw">SELECT</span> @sql = @sql + <span class="st">'USE '</span> + <span class="fn">QUOTENAME</span>(name) + <span class="st">';
+    IF EXISTS (...) INSERT @results VALUES ...'</span>
+<span class="kw">FROM</span> sys.databases <span class="kw">WHERE</span> database_id &gt; <span class="num">4</span> <span class="kw">AND</span> state = <span class="num">0</span>
+<span class="kw">EXEC</span> sp_executesql @sql
+<span class="kw">SELECT</span> DatabaseName <span class="kw">FROM</span> @results</code></pre>
+
+        <p>Script grew from ~1,852 to <strong>~2,209 lines</strong> (the largest single change in the project).</p>
+    </div>
+</div>
+
+<!-- Phase 14 -->
+<div class="card" id="phase14">
+    <div class="card-header cat-docs" onclick="toggleSection('b14')">
+        <span>Phase 14: Documentation Update <span class="badge badge-docs">Documentation</span></span>
+        <span class="toggle" id="toggle-b14">&#9654;</span>
+    </div>
+    <div class="card-body" id="b14">
+        <div class="user-msg">
+            <div class="label">User Message #10</div>
+            <div class="text">"update the documentation html file"</div>
+        </div>
+
+        <p>Over <strong>20 targeted edits</strong> to <code>DBExplorer_Documentation.html</code> to reflect all changes:</p>
+
+        <div class="detail-box">
+            <h4>Changes Made</h4>
+            <ul>
+                <li>Updated line count references (1,890 to 2,200)</li>
+                <li>Added <code>Get-SQLSecurityAssessment</code> to architecture diagram</li>
+                <li>Removed all SQL Auth references (3 instances)</li>
+                <li>Updated credential flow from [W]/[S]/[K] to [W]/[K]</li>
+                <li>Updated all function line number references (20 functions)</li>
+                <li>Changed SQL query categories from 6 to 7</li>
+                <li>Added Security Assessment to SQL queries reference table</li>
+                <li>Added Security Assessment section to report mockup documentation</li>
+                <li>Added security metrics to summary report documentation</li>
+                <li>Added new Section 9: Security Vulnerability Assessment (5,746 chars of new content)</li>
+                <li>Renumbered sections 9-12 to 10-13</li>
+                <li>Updated complete function reference table</li>
+                <li>Updated <code>$script:CredentialCache</code> description to "PSCredential cache"</li>
+            </ul>
+        </div>
+
+        <p>Documentation grew from 924 to <strong>987 lines</strong>.</p>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SESSION 3 -->
+<!-- ============================================================ -->
+<div class="session-divider">
+    Session 3: Safety Report, README &amp; Project Documentation
+    <div class="session-sub">Final deliverables and project documentation</div>
+</div>
+
+<!-- Phase 15 -->
+<div class="card" id="phase15">
+    <div class="card-header cat-audit" onclick="toggleSection('b15')">
+        <span>Phase 15: Safety Assessment Report <span class="badge badge-audit">Safety Audit</span></span>
+        <span class="toggle" id="toggle-b15">&#9654;</span>
+    </div>
+    <div class="card-body" id="b15">
+        <div class="user-msg">
+            <div class="label">User Message #11</div>
+            <div class="text">"create a safety assessment report; make sure any risks of running this are highlighted in the report (or say it's safe if it is)"</div>
+        </div>
+
+        <p>A comprehensive safety audit analyzed all 2,204 lines across <strong>16 safety categories</strong>.
+        Created <code>DBExplorer_SafetyAssessment.html</code> (53,485 characters).</p>
+
+        <table>
+            <thead><tr><th>Risk Level</th><th>Count</th><th>Categories</th></tr></thead>
+            <tbody>
+                <tr><td style="color:#2e7d32;font-weight:600;">No Risk</td><td>10</td><td>Data modification, remote writes, destructive ops, dangerous commands, permission escalation, network exposure, HTML output safety, third-party deps, obfuscation, exfiltration</td></tr>
+                <tr><td style="color:#1565c0;font-weight:600;">Low Risk</td><td>5</td><td>Credential handling, file system impact, SQL injection, error suppression, log file contents</td></tr>
+                <tr><td style="color:#e65100;font-weight:600;">Medium Risk</td><td>1</td><td>Sensitive data in reports (login names, service accounts, security findings)</td></tr>
+                <tr><td style="color:#c62828;font-weight:600;">High/Critical</td><td>0</td><td>None</td></tr>
+            </tbody>
+        </table>
+
+        <div class="callout callout-fix">
+            <strong>Verdict: SAFE - Read-Only Reconnaissance Tool</strong>
+            Zero INSERT/UPDATE/DELETE/DROP/ALTER statements. Zero remote write operations. Zero destructive commands. The only files created are local HTML reports and logs.
+        </div>
+    </div>
+</div>
+
+<!-- Phase 16 -->
+<div class="card" id="phase16">
+    <div class="card-header cat-docs" onclick="toggleSection('b16')">
+        <span>Phase 16: README Creation <span class="badge badge-docs">Documentation</span></span>
+        <span class="toggle" id="toggle-b16">&#9654;</span>
+    </div>
+    <div class="card-body" id="b16">
+        <div class="user-msg">
+            <div class="label">User Message #12</div>
+            <div class="text">"create the readme file for the repo: https://github.com/mr-r3b00t/SQLExplorer in markdown"</div>
+        </div>
+
+        <p>Created <code>README.md</code> (11,684 characters) covering:</p>
+
+        <div class="detail-box">
+            <h4>README Contents</h4>
+            <ul>
+                <li>Project description and feature overview</li>
+                <li>Complete security vulnerability assessment check table</li>
+                <li>Requirements and prerequisites</li>
+                <li>Quick start examples (4 usage patterns)</li>
+                <li>Full parameter reference table</li>
+                <li>Output directory structure</li>
+                <li>ASCII architecture diagram</li>
+                <li>Authentication flow and SQL query execution chain</li>
+                <li>Safety summary from the audit</li>
+                <li>Report section descriptions</li>
+                <li>FAQ with 6 common questions</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SESSION 4 -->
+<!-- ============================================================ -->
+<div class="session-divider">
+    Session 4: Kill Chain Analysis &amp; Exploitability Assessment
+    <div class="session-sub">Major new feature: cross-referencing security findings into exploitable attack paths mapped to kill chain phases</div>
+</div>
+
+<!-- Phase 17 -->
+<div class="card" id="phase17">
+    <div class="card-header cat-feature" onclick="toggleSection('b17')">
+        <span>Phase 17: Kill Chain / Exploitability Assessment - Major Feature <span class="badge badge-feature">New Feature</span></span>
+        <span class="toggle" id="toggle-b17">&#9654;</span>
+    </div>
+    <div class="card-body" id="b17">
+        <div class="user-msg">
+            <div class="label">User Message #13</div>
+            <div class="text">"As part of the DBExplorer.ps1 script can we add an exploitability assessment and kill chain checking (e.g. call out paths that are commonly used by threat actors and if these would work or not)"</div>
+        </div>
+
+        <div class="callout callout-decision">
+            <strong>Assessment</strong>
+            The existing Security Vulnerability Assessment reported individual findings (xp_cmdshell enabled, TRUSTWORTHY databases, etc.) but did not evaluate whether they <strong>combined into exploitable attack paths</strong>. A threat actor cares about chains of conditions, not isolated settings. For example, xp_cmdshell being enabled is only exploitable if someone has sysadmin access or explicit EXECUTE permissions.
+        </div>
+
+        <p>A formal implementation plan was created with 6 steps, reviewed, and approved. The new <code>Get-SQLKillChainAssessment</code> function (~810 lines) was the largest single addition to the project.</p>
+
+        <div class="detail-box">
+            <h4>8 New SQL Queries (all read-only SELECT)</h4>
+            <table>
+                <thead><tr><th>#</th><th>Query</th><th>System Objects</th></tr></thead>
+                <tbody>
+                    <tr><td>1</td><td>Linked Servers</td><td><code>sys.servers</code> + <code>sys.linked_logins</code></td></tr>
+                    <tr><td>2</td><td>Dangerous Agent Job Steps</td><td><code>msdb.dbo.sysjobsteps</code></td></tr>
+                    <tr><td>3</td><td>Impersonation Permissions</td><td><code>sys.server_permissions</code></td></tr>
+                    <tr><td>4</td><td>Startup Procedures</td><td><code>sys.procedures</code></td></tr>
+                    <tr><td>5</td><td>EXECUTE AS Procedures</td><td>Dynamic SQL across databases</td></tr>
+                    <tr><td>6</td><td>Server Triggers</td><td><code>sys.server_triggers</code></td></tr>
+                    <tr><td>7</td><td>Database-Scoped Credentials</td><td>Dynamic SQL across databases</td></tr>
+                    <tr><td>8</td><td>xp_cmdshell EXECUTE Permissions</td><td><code>sys.server_permissions</code></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="detail-box">
+            <h4>16 Attack Paths Across 5 Kill Chain Phases</h4>
+            <table>
+                <thead><tr><th>Phase</th><th>Attack Paths</th></tr></thead>
+                <tbody>
+                    <tr><td style="font-weight:600;">Execution (4)</td><td>xp_cmdshell RCE, OLE Automation RCE, CLR Assembly Execution, Agent Job Command Execution</td></tr>
+                    <tr><td style="font-weight:600;">Privilege Escalation (4)</td><td>TRUSTWORTHY db_owner to sysadmin, Login Impersonation, Service Account Exploitation, Cross-DB Ownership Chaining</td></tr>
+                    <tr><td style="font-weight:600;">Lateral Movement (3)</td><td>Linked Server Pivot, Ad Hoc Distributed Queries, Database Mail Exfiltration</td></tr>
+                    <tr><td style="font-weight:600;">Persistence (3)</td><td>Startup Procedure, SQL Agent Job, Trigger-based Persistence</td></tr>
+                    <tr><td style="font-weight:600;">Credential Access (2)</td><td>SA Account Brute Force, Credential Harvesting</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>Each path is classified as:</p>
+        <ul style="margin: 8px 0 16px 20px; font-size: 14px;">
+            <li><strong style="color:#c62828;">Exploitable</strong> &mdash; All prerequisites met, path is immediately actionable</li>
+            <li><strong style="color:#e65100;">Partially Exploitable</strong> &mdash; Some prerequisites met, needs one more step</li>
+            <li><strong style="color:#2e7d32;">Mitigated</strong> &mdash; Key prerequisite not met, path is blocked</li>
+        </ul>
+
+        <div class="detail-box">
+            <h4>Implementation Details (6 Steps)</h4>
+            <ul>
+                <li><strong>Step 1:</strong> Added Exploitability/OverallRisk color coding to <code>ConvertTo-HtmlTable</code></li>
+                <li><strong>Step 2:</strong> Created <code>Get-SQLKillChainAssessment</code> function (~810 lines, lines 1182-1991)</li>
+                <li><strong>Step 3:</strong> Added <code>KillChainAssessment</code> to <code>$inventoryData</code> hashtable</li>
+                <li><strong>Step 4:</strong> Wired kill chain call into <code>Invoke-DBExplorer</code> orchestration loop</li>
+                <li><strong>Step 5:</strong> Added kill chain section to <code>New-ServerReport</code> (metric card + Phase Summary + Attack Path Details)</li>
+                <li><strong>Step 6:</strong> Added kill chain data to <code>New-SummaryReport</code> (metric card + Kill Chains column)</li>
+            </ul>
+        </div>
+
+        <div class="callout callout-decision">
+            <strong>Key Design Decision: Data Cross-Referencing</strong>
+            The kill chain function receives all previously collected inventory data (SecurityFindings, ServerConfig, ServerSecurity, DatabaseSecurity, AgentJobs) as parameters to avoid redundant SQL queries. Only 8 new queries run for data not already collected.
+        </div>
+
+        <div class="callout callout-decision">
+            <strong>Key Design Decision: Exploitability Logic</strong>
+            Each attack path evaluates specific conditions from real server state. For example, "TRUSTWORTHY db_owner to sysadmin" is only Exploitable if: (a) a TRUSTWORTHY database exists, (b) a non-sysadmin user has db_owner on that database, and (c) that user could escalate to sysadmin. This goes beyond simply flagging TRUSTWORTHY as a risk.
+        </div>
+
+        <p>Script grew from 2,204 to <strong>3,112 lines</strong> (+908 lines). PS5 compatibility audit passed with zero issues.</p>
+    </div>
+</div>
+
+<!-- Phase 18 -->
+<div class="card" id="phase18">
+    <div class="card-header cat-docs" onclick="toggleSection('b18')">
+        <span>Phase 18: Documentation Updates for Kill Chain <span class="badge badge-docs">Documentation</span></span>
+        <span class="toggle" id="toggle-b18">&#9654;</span>
+    </div>
+    <div class="card-body" id="b18">
+        <div class="user-msg">
+            <div class="label">User Message #14</div>
+            <div class="text">"update all the other documents"</div>
+        </div>
+
+        <p>All 4 supporting documents were updated to reflect the kill chain feature:</p>
+
+        <div class="detail-box">
+            <h4>DBExplorer_Documentation.html</h4>
+            <ul>
+                <li>Updated line count (~2,200 to ~3,100) and architecture diagram</li>
+                <li>Added <code>Get-SQLKillChainAssessment</code> to SQL Inventory layer</li>
+                <li>Added new Section 10: Kill Chain / Exploitability Assessment with full attack path table</li>
+                <li>Added 8 new SQL queries to SQL Queries Reference</li>
+                <li>Added Kill Chain Assessment section to report mockup documentation</li>
+                <li>Updated all function line numbers (20 functions) and renumbered sections (13 to 14)</li>
+            </ul>
+        </div>
+
+        <div class="detail-box">
+            <h4>DBExplorer_SafetyAssessment.html</h4>
+            <ul>
+                <li>Updated line count (3,112) and function count (20)</li>
+                <li>Added 8 new SQL queries to verified SQL statements list (all read-only SELECT)</li>
+                <li>Updated dynamic SQL description to include kill chain function</li>
+                <li>Added kill chain data to sensitive data in reports table</li>
+                <li>Updated all file write inventory line numbers</li>
+                <li>Added kill chain SQL execution to network operations inventory</li>
+            </ul>
+        </div>
+
+        <div class="detail-box">
+            <h4>DBExplorer_DevelopmentProcess.html</h4>
+            <ul>
+                <li>Added Session 4 with Phases 17-18</li>
+                <li>Updated stats banner (4 sessions, 17 requests, 21 phases, 3,112 lines, 20 functions)</li>
+                <li>Added kill chain evolution bar to Script Evolution chart</li>
+                <li>Updated design decision registry with 2 new decisions</li>
+            </ul>
+        </div>
+
+        <div class="detail-box">
+            <h4>README.md</h4>
+            <ul>
+                <li>Added Kill Chain / Exploitability Assessment section with full attack path table</li>
+                <li>Updated line count (~3,100), architecture diagram, and report sections</li>
+                <li>Updated "What It Does" workflow and features sections</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- APPENDIX A: COMPLETE BUG REGISTRY -->
+<!-- ============================================================ -->
+<div class="session-divider" id="bugs" style="background: linear-gradient(135deg, #b71c1c, #c62828);">
+    Appendix A: Complete Bug Registry
+    <div class="session-sub">All 15 bugs discovered and fixed during development</div>
+</div>
+
+<div class="card">
+    <div class="card-header cat-bug" onclick="toggleSection('bbug')">
+        <span>All 15 Bugs - Chronological <span class="badge badge-bug">15 Fixes</span></span>
+        <span class="toggle" id="toggle-bbug">&#9654;</span>
+    </div>
+    <div class="card-body" id="bbug">
+        <table>
+            <thead>
+                <tr><th>#</th><th>Bug</th><th>Source</th><th>Root Cause</th><th>Fix</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>1</td>
+                    <td>Dead code <code>$safeDbName</code></td>
+                    <td>Self-review</td>
+                    <td>Unused variable left from development</td>
+                    <td>Removed the line</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td><code>&lt;title&gt;</code> outside <code>&lt;head&gt;</code></td>
+                    <td>Self-review</td>
+                    <td><code>Get-HtmlHeader</code> closed <code>&lt;/head&gt;</code> before callers added title</td>
+                    <td>Removed <code>&lt;/head&gt;</code> from shared function, callers close it</td>
+                </tr>
+                <tr>
+                    <td>3</td>
+                    <td>Property 'Computer' not found (line 253)</td>
+                    <td>User report</td>
+                    <td><code>EndInvoke()</code> returns <code>PSDataCollection</code> wrapper</td>
+                    <td>Iterate <code>foreach ($item in $output)</code> to unwrap</td>
+                </tr>
+                <tr>
+                    <td>4</td>
+                    <td>Non-ASCII em dash (U+2014)</td>
+                    <td>PS5 audit</td>
+                    <td>Unicode character in comment (line 232)</td>
+                    <td>Replaced with ASCII hyphen</td>
+                </tr>
+                <tr>
+                    <td>5</td>
+                    <td>UTF-8 BOM in PS5 (3 locations)</td>
+                    <td>PS5 audit</td>
+                    <td><code>Out-File -Encoding UTF8</code> writes BOM in PS5</td>
+                    <td><code>[System.IO.File]::WriteAllText</code> with <code>UTF8Encoding($false)</code></td>
+                </tr>
+                <tr>
+                    <td>6</td>
+                    <td>AppendAllText path error (line 111)</td>
+                    <td>User report</td>
+                    <td>.NET resolves relative paths differently from PowerShell</td>
+                    <td><code>IsPathRooted()</code> check + <code>Join-Path $PWD</code></td>
+                </tr>
+                <tr>
+                    <td>7</td>
+                    <td>AD query failed</td>
+                    <td>User report</td>
+                    <td>String filter <code>"Enabled -eq 'True'"</code> unreliable in PS5</td>
+                    <td>Scriptblock filter <code>{Enabled -eq $true}</code></td>
+                </tr>
+                <tr>
+                    <td>8</td>
+                    <td>Inline <code>if</code> in hashtable (line 329)</td>
+                    <td>Full audit</td>
+                    <td>PS5 can't use <code>if</code> as expression inside <code>@{}</code></td>
+                    <td>Extract to <code>$authType</code> variable</td>
+                </tr>
+                <tr>
+                    <td>9</td>
+                    <td>Inline <code>if</code> in PSCustomObject (line 1522)</td>
+                    <td>Full audit</td>
+                    <td>Same PS5 limitation</td>
+                    <td>Extract to <code>$srvVersion</code> variable</td>
+                </tr>
+                <tr>
+                    <td>10</td>
+                    <td>Inline <code>if</code> in PSCustomObject (line 1523)</td>
+                    <td>Full audit</td>
+                    <td>Same PS5 limitation</td>
+                    <td>Extract to <code>$srvEdition</code> variable</td>
+                </tr>
+                <tr>
+                    <td>11</td>
+                    <td>Write-Log hangs on empty string (line 1691)</td>
+                    <td>User report</td>
+                    <td>PS5 rejects empty string for <code>[Mandatory]</code> param</td>
+                    <td>Added <code>[AllowEmptyString()]</code> attribute</td>
+                </tr>
+                <tr>
+                    <td>12</td>
+                    <td>SQL Auth misleading UX</td>
+                    <td>User report</td>
+                    <td>SQL Auth pointless when WinRM is always required</td>
+                    <td>Removed SQL Auth from all 8 functions</td>
+                </tr>
+                <tr>
+                    <td>13</td>
+                    <td>Guest access query only checks master</td>
+                    <td>Self-found</td>
+                    <td><code>sys.database_permissions</code> is database-scoped</td>
+                    <td>Dynamic SQL iterating all user databases</td>
+                </tr>
+                <tr>
+                    <td>14</td>
+                    <td>Orphaned users query only checks master</td>
+                    <td>Self-found</td>
+                    <td><code>sys.database_principals</code> is database-scoped</td>
+                    <td>Dynamic SQL iterating all user databases</td>
+                </tr>
+                <tr>
+                    <td>15</td>
+                    <td><code>$secColor</code> inline <code>if</code> in here-string</td>
+                    <td>Self-found</td>
+                    <td>Potential PS5 parsing issue</td>
+                    <td>Extracted to variable before here-string</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="detail-box">
+            <h4>Bug Sources</h4>
+            <ul>
+                <li><strong>User-reported runtime errors:</strong> 4 bugs (EndInvoke, paths, AD filter, empty string)</li>
+                <li><strong>Self-found during code review:</strong> 4 bugs (dead code, HTML title, guest query, orphaned query)</li>
+                <li><strong>Found during systematic audit:</strong> 5 bugs (em dash, BOM, 3 inline-if patterns)</li>
+                <li><strong>User-reported design issue:</strong> 1 (SQL Auth UX)</li>
+                <li><strong>Found during feature development:</strong> 1 (secColor extraction)</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- APPENDIX B: DESIGN DECISION REGISTRY -->
+<!-- ============================================================ -->
+<div class="session-divider" id="decisions" style="background: linear-gradient(135deg, #1a237e, #283593);">
+    Appendix B: Design Decision Registry
+    <div class="session-sub">All 19 key architectural and implementation decisions</div>
+</div>
+
+<div class="card">
+    <div class="card-header cat-request" onclick="toggleSection('bdec')">
+        <span>All 19 Design Decisions <span class="badge badge-request">Architecture</span></span>
+        <span class="toggle" id="toggle-bdec">&#9654;</span>
+    </div>
+    <div class="card-body" id="bdec">
+        <table>
+            <thead><tr><th>#</th><th>Decision</th><th>Reason</th><th>Source</th></tr></thead>
+            <tbody>
+                <tr><td>1</td><td>Single .ps1 file (no modules)</td><td>Easy distribution - copy and run</td><td>User choice</td></tr>
+                <tr><td>2</td><td>Current creds first, prompt on failure</td><td>User preference for graceful fallback</td><td>User choice</td></tr>
+                <tr><td>3</td><td>Full security detail per-database</td><td>Complete audit capability</td><td>User choice</td></tr>
+                <tr><td>4</td><td>WinRM for all remote execution</td><td>No SQL client drivers needed on scanner</td><td>Architecture</td></tr>
+                <tr><td>5</td><td>Runspace pools for port scanning</td><td>Parallel async TCP for speed</td><td>Architecture</td></tr>
+                <tr><td>6</td><td>Self-contained HTML with embedded CSS/JS</td><td>Works offline, no CDN dependencies</td><td>Architecture</td></tr>
+                <tr><td>7</td><td>Invoke-Sqlcmd with .NET SqlClient fallback</td><td>Maximum compatibility</td><td>Architecture</td></tr>
+                <tr><td>8</td><td>STRING_AGG with FOR XML PATH fallback</td><td>Support SQL Server pre-2017</td><td>Architecture</td></tr>
+                <tr><td>9</td><td>.NET WriteAllText instead of Out-File</td><td>Avoid UTF-8 BOM in PowerShell 5</td><td>Bug fix</td></tr>
+                <tr><td>10</td><td>Scriptblock AD filter <code>{Enabled -eq $true}</code></td><td>Reliable across PS5/PS7</td><td>Bug fix</td></tr>
+                <tr><td>11</td><td>Absolute paths before .NET calls</td><td>.NET uses process directory, not $PWD</td><td>Bug fix</td></tr>
+                <tr><td>12</td><td>[AllowEmptyString()] on mandatory params</td><td>PS5 rejects empty mandatory strings</td><td>Bug fix</td></tr>
+                <tr><td>13</td><td>Remove SQL Auth entirely</td><td>WinRM always required, SQL Auth was misleading</td><td>User feedback</td></tr>
+                <tr><td>14</td><td>Security Assessment as first report section</td><td>Most critical info should be immediately visible</td><td>Feature design</td></tr>
+                <tr><td>15</td><td>Auto-expand on Critical findings</td><td>Draw attention to critical vulnerabilities</td><td>Feature design</td></tr>
+                <tr><td>16</td><td>Dynamic SQL for cross-database checks</td><td>Database-scoped DMVs only return current DB data</td><td>Bug fix</td></tr>
+                <tr><td>17</td><td>Extract all <code>if</code> from hashtable literals</td><td>PS5 treats <code>if</code> as statement in <code>@{}</code></td><td>Bug fix</td></tr>
+                <tr><td>18</td><td>Kill chain cross-references existing inventory data</td><td>Pass collected data as parameters instead of re-querying; only run 8 new queries for missing data</td><td>Feature design</td></tr>
+                <tr><td>19</td><td>Three-tier exploitability classification</td><td>Exploitable/Partially Exploitable/Mitigated reflects real-world attack feasibility better than binary pass/fail</td><td>Feature design</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- APPENDIX C: SCRIPT EVOLUTION CHART -->
+<!-- ============================================================ -->
+<div class="session-divider" id="evolution" style="background: linear-gradient(135deg, #2e7d32, #388e3c);">
+    Appendix C: Script Evolution
+    <div class="session-sub">How the script grew from 0 to 3,112 lines</div>
+</div>
+
+<div class="card">
+    <div class="card-header cat-build" onclick="toggleSection('bevo')">
+        <span>Line Count Evolution <span class="badge badge-build">Growth</span></span>
+        <span class="toggle open" id="toggle-bevo">&#9654;</span>
+    </div>
+    <div class="card-body active" id="bevo">
+
+        <div class="evolution-bar">
+            <div class="evolution-label">Initial creation</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:60.7%;">1,889</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">Self-review fixes</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:60.7%;">1,889</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">EndInvoke fix</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:60.7%;">~1,889</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">PS5/UTF-8 fixes</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:60.9%;">~1,895</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">Path + AD fixes</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:61.2%;">~1,904</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">PS5 audit (3 inline-if)</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:61.3%;">1,907</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">AllowEmptyString</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:61.3%;">~1,907</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">SQL Auth removal</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:59.5%;background:linear-gradient(90deg,#c62828,#e53935);">~1,852 (-55)</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">Security Assessment</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:71.0%;background:linear-gradient(90deg,#2e7d32,#43a047);">~2,209 (+357)</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">Session 3 cleanup</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:70.8%;">2,204</div></div>
+        </div>
+        <div class="evolution-bar">
+            <div class="evolution-label">Kill Chain Assessment</div>
+            <div class="evolution-track"><div class="evolution-fill" style="width:100%;background:linear-gradient(90deg,#e65100,#ff9800);">3,112 (+908)</div></div>
+        </div>
+
+        <div class="detail-box" style="margin-top: 20px;">
+            <h4>Key Milestones</h4>
+            <ul>
+                <li><strong>Biggest addition:</strong> Kill Chain / Exploitability Assessment (+908 lines) - 16 attack paths, 5 kill chain phases, 8 new SQL queries, cross-referencing of all inventory data</li>
+                <li><strong>Second largest addition:</strong> Security Vulnerability Assessment (+357 lines) - 10 check categories, 15+ finding types, report integration</li>
+                <li><strong>Biggest removal:</strong> SQL Auth removal (-55 lines) - eliminated from 8 functions after user feedback</li>
+                <li><strong>Most impactful fix:</strong> EndInvoke PSDataCollection unwrapping - was causing all port scan results to fail</li>
+                <li><strong>Most subtle bug:</strong> PS5 <code>[AllowEmptyString()]</code> - empty string on mandatory param causes interactive prompt, hanging the script silently</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- APPENDIX D: FILES CREATED -->
+<!-- ============================================================ -->
+<div class="session-divider" id="files" style="background: linear-gradient(135deg, #e65100, #f57c00);">
+    Appendix D: Files Created
+    <div class="session-sub">All deliverables produced during development</div>
+</div>
+
+<div class="card">
+    <div class="card-header cat-docs" onclick="toggleSection('bfiles')">
+        <span>All 6 Files <span class="badge badge-docs">Deliverables</span></span>
+        <span class="toggle open" id="toggle-bfiles">&#9654;</span>
+    </div>
+    <div class="card-body active" id="bfiles">
+        <table>
+            <thead><tr><th>File</th><th>Lines</th><th>Created</th><th>Purpose</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td><code>DBExplorer.ps1</code></td>
+                    <td>3,112</td>
+                    <td>Session 1, Phase 4</td>
+                    <td>The complete MSSQL discovery, inventory &amp; kill chain assessment tool</td>
+                </tr>
+                <tr>
+                    <td><code>DBExplorer_Documentation.html</code></td>
+                    <td>987</td>
+                    <td>Session 1, Phase 6</td>
+                    <td>Technical documentation with architecture, function reference, SQL query catalog</td>
+                </tr>
+                <tr>
+                    <td><code>DBExplorer_SafetyAssessment.html</code></td>
+                    <td>~700</td>
+                    <td>Session 3, Phase 15</td>
+                    <td>Comprehensive safety audit across 16 risk categories</td>
+                </tr>
+                <tr>
+                    <td><code>README.md</code></td>
+                    <td>~300</td>
+                    <td>Session 3, Phase 16</td>
+                    <td>GitHub repository README with features, usage, architecture</td>
+                </tr>
+                <tr>
+                    <td><code>DBExplorer_DevelopmentProcess.html</code></td>
+                    <td>This file</td>
+                    <td>Session 3, Phase 17</td>
+                    <td>Complete development process and history documentation</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+</div><!-- end container -->
+
+<div class="footer">
+    SQLExplorer Development Process &bull; 4 Sessions &bull; 17 User Requests &bull; 21 Phases &bull; 15 Bugs Fixed &bull; 3,112 Final Lines
+</div>
+
+<script>
+function toggleSection(id) {
+    var body = document.getElementById(id);
+    var toggle = document.getElementById('toggle-' + id);
+    if (body.classList.contains('active')) {
+        body.classList.remove('active');
+        if (toggle) toggle.classList.remove('open');
+    } else {
+        body.classList.add('active');
+        if (toggle) toggle.classList.add('open');
+    }
+}
+
+function expandAll() {
+    var bodies = document.querySelectorAll('.card-body');
+    var toggles = document.querySelectorAll('.toggle');
+    for (var i = 0; i < bodies.length; i++) bodies[i].classList.add('active');
+    for (var i = 0; i < toggles.length; i++) toggles[i].classList.add('open');
+}
+
+function collapseAll() {
+    var bodies = document.querySelectorAll('.card-body');
+    var toggles = document.querySelectorAll('.toggle');
+    for (var i = 0; i < bodies.length; i++) bodies[i].classList.remove('active');
+    for (var i = 0; i < toggles.length; i++) toggles[i].classList.remove('open');
+}
+</script>
+
+</body>
+</html>

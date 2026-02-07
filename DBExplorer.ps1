@@ -1502,6 +1502,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "xp_cmdshell Remote Code Execution"
         KillChainPhase = "Execution"
         Exploitability = $ap1Status
+        AuthRequired   = "Sysadmin or EXECUTE grant"
+        PrivilegeLevel = "High (Sysadmin)"
         Prerequisites  = $ap1Prereqs
         CurrentState   = $ap1State
         Impact         = "Execute arbitrary OS commands on the SQL Server host as the SQL service account ($serviceAccount)"
@@ -1527,6 +1529,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "OLE Automation Procedures RCE"
         KillChainPhase = "Execution"
         Exploitability = $ap2Status
+        AuthRequired   = "Sysadmin"
+        PrivilegeLevel = "High (Sysadmin)"
         Prerequisites  = $ap2Prereqs
         CurrentState   = $ap2State
         Impact         = "Execute OS commands via sp_OACreate/sp_OAMethod (file system, WScript.Shell, network access)"
@@ -1557,6 +1561,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "CLR Assembly Code Execution"
         KillChainPhase = "Execution"
         Exploitability = $ap3Status
+        AuthRequired   = "db_owner on TRUSTWORTHY DB"
+        PrivilegeLevel = "Medium (db_owner)"
         Prerequisites  = $ap3Prereqs
         CurrentState   = $ap3State
         Impact         = "Load and execute arbitrary .NET code inside SQL Server process (full RCE)"
@@ -1597,6 +1603,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "SQL Agent Job Command Execution"
         KillChainPhase = "Execution"
         Exploitability = $ap4Status
+        AuthRequired   = "Sysadmin or SQLAgentOperatorRole"
+        PrivilegeLevel = "High (Sysadmin)"
         Prerequisites  = $ap4Prereqs
         CurrentState   = $ap4State
         Impact         = "Execute OS commands (CmdExec/PowerShell) via SQL Agent as the Agent service account"
@@ -1624,6 +1632,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "TRUSTWORTHY Database Privilege Escalation"
         KillChainPhase = "Privilege Escalation"
         Exploitability = $ap5Status
+        AuthRequired   = "db_owner on TRUSTWORTHY DB"
+        PrivilegeLevel = "Medium (db_owner)"
         Prerequisites  = $ap5Prereqs
         CurrentState   = $ap5State
         Impact         = "db_owner can create a stored procedure or CLR assembly that runs as sysadmin, gaining full server control"
@@ -1651,6 +1661,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Login Impersonation to Sysadmin"
         KillChainPhase = "Privilege Escalation"
         Exploitability = $ap6Status
+        AuthRequired   = "Any SQL Login with IMPERSONATE"
+        PrivilegeLevel = "Low (Any Login)"
         Prerequisites  = $ap6Prereqs
         CurrentState   = $ap6State
         Impact         = "EXECUTE AS LOGIN allows full sysadmin access without knowing the target password"
@@ -1681,6 +1693,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Service Account Exploitation"
         KillChainPhase = "Privilege Escalation"
         Exploitability = $ap7Status
+        AuthRequired   = "Sysadmin (code execution needed)"
+        PrivilegeLevel = "High (Sysadmin)"
         Prerequisites  = $ap7Prereqs
         CurrentState   = $ap7State
         Impact         = "OS commands run as the SQL service account; if high-privilege, full domain/host compromise"
@@ -1715,6 +1729,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Cross-Database Ownership Chaining"
         KillChainPhase = "Privilege Escalation"
         Exploitability = $ap8Status
+        AuthRequired   = "EXECUTE on cross-DB procedure"
+        PrivilegeLevel = "Low (Any Login)"
         Prerequisites  = $ap8Prereqs
         CurrentState   = $ap8State
         Impact         = "Bypass database-level permission checks; access objects across databases without explicit grants"
@@ -1755,6 +1771,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Linked Server Pivot"
         KillChainPhase = "Lateral Movement"
         Exploitability = $ap9Status
+        AuthRequired   = "Any SQL Session"
+        PrivilegeLevel = "Low (Any Login)"
         Prerequisites  = $ap9Prereqs
         CurrentState   = $ap9State
         Impact         = "Execute queries and commands on remote SQL Server instances using stored or passthrough credentials"
@@ -1780,6 +1798,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Ad Hoc Distributed Queries"
         KillChainPhase = "Lateral Movement"
         Exploitability = $ap10Status
+        AuthRequired   = "Sysadmin or CONTROL SERVER"
+        PrivilegeLevel = "High (Sysadmin)"
         Prerequisites  = $ap10Prereqs
         CurrentState   = $ap10State
         Impact         = "Query arbitrary remote SQL Server, OLE DB, or ODBC data sources without linked server configuration (OPENROWSET/OPENDATASOURCE)"
@@ -1805,6 +1825,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Database Mail Data Exfiltration"
         KillChainPhase = "Lateral Movement"
         Exploitability = $ap11Status
+        AuthRequired   = "DatabaseMailUserRole or Sysadmin"
+        PrivilegeLevel = "Medium (DB Role)"
         Prerequisites  = $ap11Prereqs
         CurrentState   = $ap11State
         Impact         = "Send query results and attachments via email (data exfiltration via SMTP out-of-band channel)"
@@ -1834,6 +1856,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Startup Procedure Persistence"
         KillChainPhase = "Persistence"
         Exploitability = $ap12Status
+        AuthRequired   = "Sysadmin"
+        PrivilegeLevel = "High (Sysadmin)"
         Prerequisites  = $ap12Prereqs
         CurrentState   = $ap12State
         Impact         = "Stored procedure executes automatically every time SQL Server starts (persistent backdoor)"
@@ -1859,6 +1883,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "SQL Agent Job Persistence"
         KillChainPhase = "Persistence"
         Exploitability = $ap13Status
+        AuthRequired   = "Sysadmin or SQLAgentOperatorRole"
+        PrivilegeLevel = "High (Sysadmin)"
         Prerequisites  = $ap13Prereqs
         CurrentState   = $ap13State
         Impact         = "Create or modify SQL Agent jobs to execute malicious commands on a schedule (survives reboots)"
@@ -1883,6 +1909,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Trigger-based Persistence"
         KillChainPhase = "Persistence"
         Exploitability = $ap14Status
+        AuthRequired   = "Sysadmin"
+        PrivilegeLevel = "High (Sysadmin)"
         Prerequisites  = $ap14Prereqs
         CurrentState   = $ap14State
         Impact         = "DDL/DML triggers execute automatically on database events (CREATE, ALTER, INSERT, etc.) for covert persistence"
@@ -1913,6 +1941,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "SA Account Brute Force"
         KillChainPhase = "Credential Access"
         Exploitability = $ap15Status
+        AuthRequired   = "No Auth Required"
+        PrivilegeLevel = "None (Unauthenticated)"
         Prerequisites  = $ap15Prereqs
         CurrentState   = $ap15State
         Impact         = "Full sysadmin access via the well-known sa account (default target for attackers)"
@@ -1949,6 +1979,8 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         AttackPath     = "Credential Harvesting"
         KillChainPhase = "Credential Access"
         Exploitability = $ap16Status
+        AuthRequired   = "Any SQL Session"
+        PrivilegeLevel = "Low (Any Login)"
         Prerequisites  = $ap16Prereqs
         CurrentState   = $ap16State
         Impact         = "Extract stored credentials from linked servers, agent jobs, or database-scoped credentials for further compromise"
@@ -1970,12 +2002,25 @@ AND pe.state_desc IN ('GRANT', 'GRANT_WITH_GRANT_OPTION')
         $keyNames = @($pathsInPhase | Where-Object { $_.Exploitability -ne 'Mitigated' } | ForEach-Object { $_.AttackPath })
         $keyNamesStr = if ($keyNames.Count -gt 0) { $keyNames -join ', ' } else { 'None' }
 
+        # Determine lowest privilege among non-mitigated paths in this phase
+        $activePaths = @($pathsInPhase | Where-Object { $_.Exploitability -ne 'Mitigated' })
+        $privOrder = @('None (Unauthenticated)', 'Low (Any Login)', 'Medium (db_owner)', 'Medium (DB Role)', 'High (Sysadmin)')
+        $lowestPriv = 'N/A'
+        foreach ($p in $privOrder) {
+            $matchFound = @($activePaths | Where-Object { $_.PrivilegeLevel -eq $p })
+            if ($matchFound.Count -gt 0) {
+                $lowestPriv = $p
+                break
+            }
+        }
+
         [PSCustomObject]@{
             Phase            = $phase
             ExploitableCount = $exploitable
             PartialCount     = $partial
             MitigatedCount   = $mitigated
             OverallRisk      = $risk
+            LowestPrivilege  = $lowestPriv
             KeyFindings      = $keyNamesStr
         }
     }
@@ -2069,6 +2114,19 @@ function ConvertTo-HtmlTable {
                 if ($val -eq "Critical") { $cellClass = " class='status-critical'" }
                 elseif ($val -eq "Warning") { $cellClass = " class='status-warning'" }
                 elseif ($val -eq "Info") { $cellClass = " class='status-ok'" }
+            }
+
+            # Color coding for privilege level (lower privilege = higher risk to defenders)
+            if ($prop -eq "PrivilegeLevel" -or $prop -eq "LowestPrivilege") {
+                if ($val -match "^None") { $cellClass = " class='status-critical'" }
+                elseif ($val -match "^Low") { $cellClass = " class='status-critical'" }
+                elseif ($val -match "^Medium") { $cellClass = " class='status-warning'" }
+                elseif ($val -match "^High") { $cellClass = " class='status-ok'" }
+            }
+
+            # Color coding for auth required (highlight unauthenticated)
+            if ($prop -eq "AuthRequired") {
+                if ($val -eq "No Auth Required") { $cellClass = " class='status-critical'" }
             }
 
             $displayVal = if ($null -eq $val) { "" }
@@ -2442,11 +2500,11 @@ function New-ServerReport {
             <div id="sec-killchain" class="section-content$kcActiveClass">
                 <div class="sub-section">
                     <h3>Kill Chain Phase Summary</h3>
-                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.KillChainPhases } else { $null }) -Properties @('Phase','ExploitableCount','PartialCount','MitigatedCount','OverallRisk','KeyFindings') -EmptyMessage 'Kill chain assessment not available')
+                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.KillChainPhases } else { $null }) -Properties @('Phase','ExploitableCount','PartialCount','MitigatedCount','OverallRisk','LowestPrivilege','KeyFindings') -EmptyMessage 'Kill chain assessment not available')
                 </div>
                 <div class="sub-section">
                     <h3>Attack Path Details</h3>
-                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.AttackPaths } else { $null }) -Properties @('AttackPath','KillChainPhase','Exploitability','Prerequisites','CurrentState','Impact','Remediation') -EmptyMessage 'No attack paths evaluated')
+                    $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.AttackPaths } else { $null }) -Properties @('AttackPath','KillChainPhase','Exploitability','AuthRequired','PrivilegeLevel','Prerequisites','CurrentState','Impact','Remediation') -EmptyMessage 'No attack paths evaluated')
                 </div>
             </div>
         </div>

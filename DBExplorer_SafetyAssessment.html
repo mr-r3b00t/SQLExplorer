@@ -317,8 +317,8 @@
         <span class="toggle open" id="toggle-body1">&#9654;</span>
     </div>
     <div class="card-body active" id="body1">
-        <p>This report assesses all 2,204 lines of <code>DBExplorer.ps1</code> across 16 safety categories.
-        The script contains <strong>19 PowerShell functions</strong> and generates self-contained HTML reports.</p>
+        <p>This report assesses all 3,112 lines of <code>DBExplorer.ps1</code> across 16 safety categories.
+        The script contains <strong>20 PowerShell functions</strong> and generates self-contained HTML reports.</p>
 
         <div class="callout callout-safe">
             <strong>Overall Verdict: SAFE</strong>
@@ -383,16 +383,25 @@
                 <li><code>SELECT</code> from <code>sys.server_permissions</code> - Read server permissions</li>
                 <li><code>SELECT</code> from <code>msdb.dbo.backupset</code> - Read backup history</li>
                 <li><code>SELECT</code> from <code>msdb.dbo.sysjobs</code> / <code>sysjobhistory</code> - Read agent job info</li>
+                <li><code>SELECT</code> from <code>sys.servers</code> / <code>sys.linked_logins</code> - Read linked server configs (kill chain)</li>
+                <li><code>SELECT</code> from <code>msdb.dbo.sysjobsteps</code> - Read dangerous job step subsystems (kill chain)</li>
+                <li><code>SELECT</code> from <code>sys.server_permissions</code> - Read IMPERSONATE and EXECUTE permissions (kill chain)</li>
+                <li><code>SELECT</code> from <code>sys.procedures</code> - Read startup procedures (kill chain)</li>
+                <li><code>SELECT</code> from <code>sys.server_triggers</code> - Read enabled server triggers (kill chain)</li>
+                <li><code>SELECT</code> from <code>sys.database_scoped_credentials</code> - Read credential objects (kill chain)</li>
                 <li><code>SERVERPROPERTY()</code> - Read server metadata function</li>
                 <li><code>@@VERSION</code>, <code>@@SERVERNAME</code> - Read server globals</li>
             </ul>
         </div>
 
         <div class="detail-box">
-            <h4>Dynamic SQL in Security Assessment</h4>
-            <p>The <code>Get-SQLSecurityAssessment</code> function (lines 895-1180) uses <code>sp_executesql</code>
-            for cross-database iteration, but the dynamic SQL contains only SELECT statements and uses
-            <code>QUOTENAME()</code> to safely escape database names. The pattern is:</p>
+            <h4>Dynamic SQL in Security and Kill Chain Assessment</h4>
+            <p>The <code>Get-SQLSecurityAssessment</code> function (lines 895-1180) and <code>Get-SQLKillChainAssessment</code>
+            function (lines 1182-1991) both use <code>sp_executesql</code> for cross-database iteration. All dynamic SQL
+            contains only SELECT statements and uses <code>QUOTENAME()</code> to safely escape database names. The kill chain
+            function adds 8 new read-only queries for linked servers, impersonation permissions, startup procedures,
+            EXECUTE AS procedures, server triggers, database-scoped credentials, and xp_cmdshell EXECUTE permissions.
+            The pattern is:</p>
             <pre><span class="comment">-- Guest access check (lines 1060-1068)</span>
 <span class="keyword">DECLARE</span> @results <span class="keyword">TABLE</span> (DatabaseName SYSNAME)
 <span class="keyword">DECLARE</span> @sql NVARCHAR(MAX) = <span class="string">''</span>
@@ -486,13 +495,13 @@
                 <li>No <code>&amp;</code> operator used for dynamic invocation of untrusted strings</li>
                 <li>No <code>[ScriptBlock]::Create()</code> from user input</li>
                 <li>No <code>.NET Reflection</code> for arbitrary code execution</li>
-                <li>No <code>Add-Type</code> with inline C# code (only <code>Add-Type -AssemblyName System.Web</code> to load a standard library)</li>
+                <li>No <code>Add-Type</code> with inline C# code (only <code>Add-Type -AssemblyName System.Web</code> to load a standard .NET library)</li>
                 <li>No <code>DownloadString</code>, <code>DownloadFile</code>, or <code>Invoke-WebRequest</code></li>
                 <li>No Base64 encoding/decoding of commands</li>
             </ul>
         </div>
         <div class="detail-box">
-            <h4>Start-Process Usage (Line 2193)</h4>
+            <h4>Start-Process Usage (Line 3101)</h4>
             <p>The only instance of <code>Start-Process</code> opens the final summary report in the default browser:</p>
             <pre><span class="keyword">Start-Process</span> <span class="string">$summaryFile</span>  <span class="comment"># Opens local HTML file</span></pre>
             <p>This is a standard pattern for opening generated reports. The file path is constructed internally
@@ -550,8 +559,9 @@
                 <li><strong>TCP Port Scanning</strong> (lines 163-264): Outbound TCP connections to target servers
                     on ports 1433, 1434, 2383, 4022 only. Uses short-lived TcpClient with 1-second timeout.
                     No persistent connections.</li>
-                <li><strong>WinRM</strong> (lines 270-494): Uses standard Windows Remote Management (port 5985/5986)
-                    for Invoke-Command. This is a built-in Windows protocol authenticated by Kerberos.</li>
+                <li><strong>WinRM</strong> (lines 270-1991, 2803+): Uses standard Windows Remote Management (port 5985/5986)
+                    for Invoke-Command. This is a built-in Windows protocol authenticated by Kerberos. All SQL inventory
+                    queries (including the 8 additional kill chain assessment queries) execute via WinRM.</li>
                 <li><strong>No listening ports</strong>: Script never calls <code>TcpListener</code>,
                     <code>HttpListener</code>, or opens any server sockets.</li>
                 <li><strong>No external HTTP calls</strong>: No <code>Invoke-WebRequest</code>,
@@ -672,8 +682,8 @@
         <div class="detail-box">
             <h4>Safety Measures</h4>
             <ul>
-                <li>Filenames are sanitized: <code>-replace '[\\/:*?"&lt;&gt;|]', '_'</code> (line 1711) prevents path traversal</li>
-                <li>Output path is resolved to an absolute path (line 1933-1934) preventing ambiguity</li>
+                <li>Filenames are sanitized: <code>-replace '[\\/:*?"&lt;&gt;|]', '_'</code> (line 2575) prevents path traversal</li>
+                <li>Output path is resolved to an absolute path (line 2817-2818) preventing ambiguity</li>
                 <li>UTF-8 no-BOM encoding used throughout for maximum compatibility</li>
                 <li>No existing files are overwritten - each report has a unique timestamp in the filename</li>
                 <li>No file deletion operations anywhere in the script</li>
@@ -879,6 +889,16 @@
                     <td>Agent Jobs section</td>
                     <td>May reveal business processes or third-party tools</td>
                 </tr>
+                <tr>
+                    <td>Kill chain attack paths</td>
+                    <td>Kill Chain Assessment section</td>
+                    <td>Exploitability status of 16 real-world attack paths with prerequisites and current state</td>
+                </tr>
+                <tr>
+                    <td>Linked server credentials</td>
+                    <td>Kill Chain Assessment section</td>
+                    <td>Linked server configurations, saved credential presence, database-scoped credentials</td>
+                </tr>
             </tbody>
         </table>
 
@@ -913,14 +933,15 @@
         <div class="detail-box">
             <h4>Encoding Points Verified</h4>
             <ul>
-                <li><strong>ConvertTo-HtmlTable</strong> (line 1251): All table cell values are encoded via
-                    <code>[System.Web.HttpUtility]::HtmlEncode($val)</code></li>
-                <li><strong>Table headers</strong> (line 1211): Property names encoded</li>
-                <li><strong>Server names</strong> (lines 1509, 1522): Encoded in report titles and headers</li>
-                <li><strong>SQL version/edition strings</strong> (lines 1526, 1530): Encoded</li>
-                <li><strong>Database names</strong> (line 1656): Encoded in section headers</li>
-                <li><strong>Error messages</strong> (line 1695): Encoded before HTML insertion</li>
-                <li><strong>File paths</strong> (line 1860): Encoded in summary report links</li>
+                <li><strong>ConvertTo-HtmlTable</strong>: All table cell values are encoded via
+                    <code>[System.Web.HttpUtility]::HtmlEncode($val)</code> (used for all inventory tables including kill chain assessment tables)</li>
+                <li><strong>Table headers</strong>: Property names encoded</li>
+                <li><strong>Server names</strong>: Encoded in report titles and headers</li>
+                <li><strong>SQL version/edition strings</strong>: Encoded</li>
+                <li><strong>Database names</strong>: Encoded in section headers</li>
+                <li><strong>Error messages</strong>: Encoded before HTML insertion</li>
+                <li><strong>File paths</strong>: Encoded in summary report links</li>
+                <li><strong>Kill chain data</strong>: All attack path names, prerequisites, current state, impact, and remediation text are encoded via ConvertTo-HtmlTable</li>
             </ul>
         </div>
 
@@ -939,7 +960,7 @@
         <span class="toggle" id="toggle-body15">&#9654;</span>
     </div>
     <div class="card-body" id="body15">
-        <p>Every file write operation in the entire 2,204-line script is listed below. There are exactly
+        <p>Every file write operation in the entire 3,112-line script is listed below. There are exactly
         <strong>5 file write operations</strong>, all local:</p>
 
         <table>
@@ -956,28 +977,28 @@
                 </tr>
                 <tr>
                     <td>2</td>
-                    <td>1714</td>
+                    <td>2578</td>
                     <td><code>WriteAllText</code></td>
                     <td><code>$reportDir\$computerName_*.html</code></td>
                     <td>Write per-server HTML report</td>
                 </tr>
                 <tr>
                     <td>3</td>
-                    <td>1910</td>
+                    <td>2794</td>
                     <td><code>WriteAllText</code></td>
                     <td><code>$reportDir\Summary_*.html</code></td>
                     <td>Write summary HTML report</td>
                 </tr>
                 <tr>
                     <td>4</td>
-                    <td>1939</td>
+                    <td>2823</td>
                     <td><code>New-Item -Directory</code></td>
                     <td><code>$reportDir</code></td>
                     <td>Create report output directory</td>
                 </tr>
                 <tr>
                     <td>5</td>
-                    <td>1940</td>
+                    <td>2824</td>
                     <td><code>New-Item -Directory</code></td>
                     <td><code>$reportDir\Logs</code></td>
                     <td>Create log subdirectory</td>
@@ -1033,11 +1054,18 @@
                     <td>Remote registry + service queries</td>
                 </tr>
                 <tr>
-                    <td>SQL Query Execution</td>
+                    <td>SQL Query Execution (Inventory)</td>
                     <td>432-494</td>
                     <td>WinRM (HTTP/S)</td>
                     <td>Outbound to targets</td>
-                    <td>Invoke-Command with SQL queries</td>
+                    <td>Invoke-Command with SQL queries (config, databases, backups, security, agent jobs, security assessment)</td>
+                </tr>
+                <tr>
+                    <td>SQL Query Execution (Kill Chain)</td>
+                    <td>1182-1991</td>
+                    <td>WinRM (HTTP/S)</td>
+                    <td>Outbound to targets</td>
+                    <td>8 additional read-only SQL queries for kill chain assessment (linked servers, impersonation, triggers, credentials, etc.)</td>
                 </tr>
             </tbody>
         </table>
@@ -1057,7 +1085,7 @@
 </div><!-- end container -->
 
 <div class="footer">
-    DBExplorer Safety Assessment Report &bull; Generated by code review analysis &bull; Script version: 2,204 lines / 19 functions
+    DBExplorer Safety Assessment Report &bull; Generated by code review analysis &bull; Script version: 3,112 lines / 20 functions
 </div>
 
 <script>
