@@ -2263,6 +2263,14 @@ function Get-HtmlHeader {
         padding-bottom: 5px;
         border-bottom: 1px solid #e9ecef;
     }
+    .table-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 10px 0;
+    }
+    .table-scroll table {
+        min-width: 1200px;
+    }
     table {
         width: 100%;
         border-collapse: collapse;
@@ -2500,11 +2508,15 @@ function New-ServerReport {
             <div id="sec-killchain" class="section-content$kcActiveClass">
                 <div class="sub-section">
                     <h3>Kill Chain Phase Summary</h3>
+                    <div class="table-scroll">
                     $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.KillChainPhases } else { $null }) -Properties @('Phase','ExploitableCount','PartialCount','MitigatedCount','OverallRisk','LowestPrivilege','KeyFindings') -EmptyMessage 'Kill chain assessment not available')
+                    </div>
                 </div>
                 <div class="sub-section">
                     <h3>Attack Path Details</h3>
+                    <div class="table-scroll">
                     $(ConvertTo-HtmlTable -Data $(if ($InventoryData.KillChainAssessment) { $InventoryData.KillChainAssessment.AttackPaths } else { $null }) -Properties @('AttackPath','KillChainPhase','Exploitability','AuthRequired','PrivilegeLevel','Prerequisites','CurrentState','Impact','Remediation') -EmptyMessage 'No attack paths evaluated')
+                    </div>
                 </div>
             </div>
         </div>
